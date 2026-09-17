@@ -13,7 +13,7 @@ description: >-
 metadata:
   type: meta
   author: Sergio + Claude
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Debate — adversarial chamber (Claude ↔ second model)
@@ -56,12 +56,40 @@ State a clear position: steelman BOTH sides briefly, then give your recommendati
 reasoning and your assumptions. This is what the adversary will attack — make it concrete, not
 hedged.
 
+**Entry contract (headless-ready):** the position MUST open with two explicit fields —
+- **Hypothesis**: a *falsifiable* prediction ("adopting X prevents Y, measurable by Z"). A
+  hypothesis like "adopt X" is explicit but not falsifiable — it degrades the field to formality.
+- **Objective**: the measurable outcome that closes the debate.
+
+**Enumerate attack axes** at the end of the position. The fixed core applies to every debate —
+statistical validity of supporting claims · spec/internal consistency · cost and overhead for a
+single user · failure modes of the proposed mechanism itself · order of execution and undeclared
+dependencies — and it is a **floor, not a ceiling**. Add an axis beyond the core only when this
+debate reveals a class of finding the core does not cover, and record the addition (axis + date)
+in the deliberation so the core can absorb it.
+
 ### Phase 2 — Adversary round (the second model)
+**Pre-send check first (hard-fail):** before ANY PAL call that includes files or pasted content,
+export the composed prompt to a temp file and run
+`python3 <plugin-root>/scripts/pal_pre_send_check.py --payload <files...> --prompt-file <prompt.txt> --model <slug> [--max-tokens N] [--max-usd X]`
+(add `--payload`/`--stdin` for the prompt text too). Exit 1 = **abort pre-send** — blacklisted
+filename, secret-pattern hit, or pre-committed budget exceeded. This scans the exact bytes that
+would leave; it is a script, not a mental grep, because in headless nobody verifies a mental grep
+ran.
+
 Hand your position + the context to the second model via the standard call (see
 `references/pal-call-conventions.md`), framed to **attack**: find missing constraints, errors,
 omissions, failure modes; steelman the opposite; flag what it lacks context on. Apply the canonical
 **evidence gate** from that file — claims that are bare assertion get discounted. Reuse the
 `continuation_id` across rounds so the adversary keeps full context.
+
+**Adversary output contract:** every finding numbered `[H1..Hn]` with (a) proposed severity
+(blocking/high/medium/low), (b) concrete failure mechanism ("if X then Y"), (c) evidence
+(file:line / §dossier / reproducible reasoning), (d) one-line prescription — closed by two
+paragraphs: "what the plan has right" and "what you cannot evaluate from your position".
+**Non-conformance:** if the output lacks the structure or citations, retry ONCE restating the
+contract verbatim; if it fails again, mark the round NON-ADJUDICABLE and move it to the pending
+appendix (do not silently accept an unstructured attack).
 
 ### Phase 3 — Adjudicate (never pass raw)
 Apply the shared **Adjudication Protocol** (`references/adjudication-protocol.md`, at the plugin root)
@@ -72,12 +100,24 @@ and kills a plausible one.
 
 ### Phase 4 — Refine (optional, capped)
 If the adjudication changed your position, refine it and run ONE more adversary round.
-**Cap the total at 2–3 rounds.** Debate amplifies shared bias after the first round
+**Cap the total at 3 rounds.** Debate amplifies shared bias after the first round
 (arXiv 2505.19477); the cross-vendor pairing (Claude + GLM share little training) mitigates this
 but doesn't remove it — so stop early and flag if the two models start agreeing for agreement's
 sake (convergence can be groupthink, not truth).
 
 ### Phase 5 — Synthesis
+Deliver a **tri-valued verdict**: `APROBADO` / `APROBADO-CON-CONDICIONES` / `RECHAZADO`.
+- A **REAL blocking finding the adversary does not withdraw when the cap is reached forces
+  `RECHAZADO`** — never APROBADO-CON-CONDICIONES with a blocker parked in the appendix.
+- Residual non-blocking disagreements go to an appendix marked
+  `PENDIENTE-ADJUDICACIÓN-SERGIO` — async escalation, not an interruption; each appendix item
+  carries claim, evidence, the adjudicator's tentative position, and the specific decision the
+  user must make.
+- **Scope of bindingness:** inside the Guardrail workflow (project `AGENTS.md`, step 2) the
+  verdict is a **gate** — RECHAZADO means the task is not defined, binding until the user
+  overrides (the appendix states the override path). Outside it, advisory — the verdict informs
+  the user's decision.
+
 Deliver a verdict that is stronger than either opening position: what survived, what each side
 **conceded**, the decisive evidence, and the open dissents. Make the recommendation explicit.
 For decisions better served by a multi-model vote than a single adversary, consider
@@ -96,13 +136,22 @@ output is adjudicated like any other.
   self-adversarial pass. Prefer a non-Anthropic model for a real debate.
 - If PAL is unavailable, run a **self-adversarial** pass (you argue the opposite side as hard as
   you can) and say explicitly that no second model was used.
+- **User-copy preflight:** if this skill is read from a copy under `~/.kimi-code/skills/`, verify
+  it is a symlink resolving into the canonical plugin repo (`readlink -f ~/.kimi-code/skills/debate`
+  must land inside it). A dangling link or a plain-file copy means the rules may be stale — say so
+  and re-deploy before debating.
 
 ## Output (present in this structure)
-1. **Position** — your recommendation + reasoning + assumptions.
+1. **Position** — recommendation + hypothesis (falsifiable) + objective (measurable) + enumerated
+   attack axes.
 2. **Adversary's strongest points — adjudicated** — each tagged REAL/SMELL/FP/HALLUCINATION with
    the verification.
-3. **Verdict** — the synthesis, what each side conceded, decisive evidence, open dissents.
-4. **Footer** — `> Want another round, a different framing, or a normal request to act on this?`
+3. **Verdict** — tri-valued; what each side conceded, decisive evidence, open dissents; appendix
+   `PENDIENTE-ADJUDICACIÓN-SERGIO` if residual disagreements remain.
+4. **What this debate does NOT evaluate** — required categories: (a) implementability in the
+   current repo, (b) interaction with existing skills/workflows, (c) accuracy of any cost
+   estimate, (d) items that require human judgment.
+5. **Footer** — `> Want another round, a different framing, or a normal request to act on this?`
 
 Respond in the user's language.
 

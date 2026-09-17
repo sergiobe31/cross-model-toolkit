@@ -14,7 +14,7 @@ description: >-
 metadata:
   type: meta
   author: Sergio + Claude
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Interceptor — idea → ready-to-paste prompt
@@ -95,7 +95,11 @@ in. Otherwise state your assumptions in the diagnosis.
 ### Phase 5 — Draft (single-model, or cross-model via PAL)
 - **Default (single-model):** Claude drafts the prompt from the rubric below.
 - **Cross-model (when the PAL MCP is available and the idea is non-trivial, or the user opts
-  in):** hand the assembled context + idea + rubric to the second model via the standard call (see
+  in):** before the call, run the **pre-send check** (hard-fail): export the composed hand-off to
+  a temp file and run
+  `python3 <plugin-root>/scripts/pal_pre_send_check.py --payload <files...> --prompt-file <prompt.txt> --model <slug>`
+  (exit 1 = abort pre-send; full contract in the `debate` skill, Phase 2). Then hand the assembled
+  context + idea + rubric to the second model via the standard call (see
   `references/pal-call-conventions.md`: `mcp__pal__chat`, session model or default `z-ai/glm-5.2`,
   `thinking_mode: high`, files via `absolute_file_paths`) to either **(a) draft** the prompt or
   **(b) red-team** Claude's draft (hunt for missing constraints, ambiguities, failure
