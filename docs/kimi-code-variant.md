@@ -11,7 +11,7 @@ as deployed in the `rule_extraction` project.
   (`sergiobe31/pal-mcp-server@e4ffd3609b56882510ccdca27883eea15d85b68a`) with the OpenRouter
   reasoning patch.
 - **Registry:** the same generated superset `config/pal_openrouter_models.json` (27 upstream base
-  models + 6 curated overlay entries, 6 flagged `supports_extended_thinking`), wired via
+  models + 7 curated overlay entries, 7 flagged `supports_extended_thinking`), wired via
   `OPENROUTER_MODELS_CONFIG_PATH`. The project copy is byte-identical in its `models` array to the
   one generated here by `scripts/build_registry.py`.
 - **Env:** `DEFAULT_MODEL=auto`, no `OPENROUTER_ALLOWED_MODELS` — any OpenRouter model per call.

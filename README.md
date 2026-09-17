@@ -74,9 +74,9 @@ model's `<reasoning>` trace to its answer. The skills call the second model at *
 (`thinking_mode: max`) by default and dial down for trivial tasks.
 
 It's **generalizable but opt-in per model**: only models with `supports_extended_thinking: true` in
-`config/pal_openrouter_models.json` get reasoning. By default **6 models** are flagged —
-`z-ai/glm-5.2`, `deepseek/deepseek-v4-pro`, `moonshotai/kimi-k3`, `minimax/minimax-m3`,
-`tencent/hy3` and `openai/gpt-5.6-sol-pro` — every other model is byte-identical to upstream
+`config/pal_openrouter_models.json` get reasoning. By default **7 models** are flagged —
+`z-ai/glm-5.2`, `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4.1-flash`, `moonshotai/kimi-k3`,
+`minimax/minimax-m3`, `tencent/hy3` and `openai/gpt-5.6-sol-pro` — every other model is byte-identical to upstream
 PAL. To enable reasoning for another OpenRouter model, flip its flag to `true`; to disable one, flip
 it to `false`.
 
@@ -145,9 +145,9 @@ model per call* and **any OpenRouter model works**:
   `"OPENROUTER_ALLOWED_MODELS": "your/model"` back to `.mcp.json`.
 - **GLM at 1M + reasoning (default):** `config/pal_openrouter_models.json` is a **superset** registry
   wired by default (`OPENROUTER_MODELS_CONFIG_PATH`), so GLM-5.2 runs at its full **1M** window while
-  every other model keeps its correct one. Reasoning is on too (see *Reasoning*): 6 models are flagged
-  `supports_extended_thinking` (GLM-5.2, deepseek-v4-pro, kimi-k3, minimax-m3, hy3,
-  gpt-5.6-sol-pro), so all other models are byte-identical to upstream. This rides a small PAL
+  every other model keeps its correct one. Reasoning is on too (see *Reasoning*): 7 models are flagged
+  `supports_extended_thinking` (GLM-5.2, deepseek-v4-pro, deepseek-v4.1-flash, kimi-k3,
+  minimax-m3, hy3, gpt-5.6-sol-pro), so all other models are byte-identical to upstream. This rides a small PAL
   fork pinned by SHA — see CREDITS.
 - **`/debate` caveat:** its value comes from a *different-vendor* model. Point it at a model from the
   same vendor as your main agent and it becomes self-adversarial — the different-distribution
@@ -170,11 +170,13 @@ cross-model-toolkit/
     ├── .claude-plugin/plugin.json             # manifest + userConfig (openrouter_api_key, sensitive)
     ├── .mcp.json                              # PAL server: pinned reasoning fork + superset registry, ${user_config.openrouter_api_key}, DEFAULT_MODEL=auto
     ├── references/adjudication-protocol.md    # the verify-don't-trust protocol both skills share
-    ├── references/pal-call-conventions.md     # shared PAL mechanics: division of labor, standard call, evidence gate, native tools
+    ├── references/pal-call-conventions.md     # shared PAL mechanics: division of labor, standard call, pre-send guard, evidence gate, native tools
     ├── skills/{interceptor,debate}/SKILL.md
     ├── scripts/build_registry.py              # registry builder: upstream base @ pinned SHA + overlay (--check for CI, --diff for external copies)
-    ├── config/pal_registry_overlay.json       # the only hand-edited registry file (6 curated entries + flag overrides)
-    └── config/pal_openrouter_models.json      # GENERATED registry (27 base + 6 curated, incl. GLM @ 1M); wired by default — 6 models flagged for reasoning
+    ├── scripts/pal_pre_send_check.py          # pre-send secrets guard: filename blacklist + 10 regexes, exit 1 = abort, token/cost estimate
+    ├── config/pal_registry_overlay.json       # the only hand-edited registry file (7 curated entries + flag overrides)
+    ├── config/pal_price_table.json            # dated price source for the guard's cost estimate (warns if >90 days old)
+    └── config/pal_openrouter_models.json      # GENERATED registry (27 base + 7 curated, incl. GLM @ 1M); wired by default — 7 models flagged for reasoning
 ```
 
 ## How it's built (record of decisions)
@@ -190,15 +192,15 @@ cross-model-toolkit/
   model*.
 - **Config:** `config/pal_openrouter_models.json` is a **generated superset** registry — built by
   `scripts/build_registry.py` from PAL's 27 bundled models (fetched at the SHA pinned in `.mcp.json`)
-  plus the curated overlay `config/pal_registry_overlay.json` (6 added entries: GLM-5.2 @ 1M,
-  deepseek-v4-pro, kimi-k3, minimax-m3, hy3, gpt-5.6-sol-pro; plus intentional
+  plus the curated overlay `config/pal_registry_overlay.json` (7 added entries: GLM-5.2 @ 1M,
+  deepseek-v4-pro, deepseek-v4.1-flash, kimi-k3, minimax-m3, hy3, gpt-5.6-sol-pro; plus intentional
   `supports_extended_thinking:false` overrides on 11 base models upstream ships as true). Wired by
   default via `OPENROUTER_MODELS_CONFIG_PATH`, so GLM gets 1M while every other model keeps its
   correct window.
 - **Reasoning:** PAL is pinned by SHA to a minimal fork (`sergiobe31/pal-mcp-server`) that maps
   `thinking_mode` onto OpenRouter's `reasoning` field. Only models flagged `supports_extended_thinking`
-  reason — by default 6 (GLM-5.2, deepseek-v4-pro, kimi-k3, minimax-m3, hy3, gpt-5.6-sol-pro);
-  everything else is byte-identical to upstream. See CREDITS / issue #462.
+  reason — by default 7 (GLM-5.2, deepseek-v4-pro, deepseek-v4.1-flash, kimi-k3, minimax-m3, hy3,
+  gpt-5.6-sol-pro); everything else is byte-identical to upstream. See CREDITS / issue #462.
 
 ## Credits & license
 
