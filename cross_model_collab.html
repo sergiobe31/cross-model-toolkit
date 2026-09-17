@@ -336,7 +336,7 @@
     <div class="golden">
       <span class="glabel">The discipline</span>
       <h2>Nothing the second model says is trusted until it's verified against ground truth.</h2>
-      <p>Its output is a <strong>proposal, not truth</strong>. Claude checks it claim-by-claim against <code>file:line</code> / source / trace and tags each one. Verification cuts both ways: it catches a real bug <strong>and</strong> it clears a false alarm. That's what turns a second model from a liability into an asset.</p>
+      <p>Its output is a <strong>proposal, not truth</strong>. Claude checks it claim-by-claim against <code>file:line</code> / source / trace and tags each one. Verification cuts both ways: it catches a real bug <strong>and</strong> it clears a false alarm. That's what turns a second model from a liability into an asset. The gate now runs in both directions: a <strong>pre-send guard</strong> scans the exact bytes leaving the machine (payload files + composed prompt) against a filename blacklist and secret regexes — hard-fail, nothing is sent — and adjudication checks everything that comes back.</p>
       <div class="tags">
         <span class="gtag">REAL</span>
         <span class="gtag">SMELL</span>
@@ -348,7 +348,7 @@
         <span class="arrow">→</span>
         <span class="step">adjudicate</span>
         <span class="arrow">→</span>
-        <span class="step">GO / NO-GO</span>
+        <span class="step">GO / CONDITIONAL / NO-GO</span>
       </div>
     </div>
   </div>
@@ -367,6 +367,12 @@
         <div class="row">
           <span class="badge c">/interceptor — idea → prompt</span>
           <span class="badge c">/debate — stress-test a decision</span>
+        </div>
+      </div>
+      <div class="tgroup">
+        <span class="glabel2">Guard</span>
+        <div class="row">
+          <span class="badge c">pre-send check — secrets + budget · exit 1 = abort</span>
         </div>
       </div>
       <div class="tgroup">
@@ -487,6 +493,20 @@
         </div>
       </div>
 
+      <div class="case live">
+        <div class="idx">7</div>
+        <div class="body">
+          <h3>A brand-new model's first day on the job</h3>
+          <div class="meta">Live · fresh-eyes gap review · 16 findings adjudicated</div>
+          <p>A model added to the registry that same day (deepseek-v4.1-flash, untested until then) was handed a hardened adoption plan for a fresh-eyes gap review. It returned 16 findings; Claude verified every citation against the code and the OpenRouter API: 11 REAL, 4 SMELL, 1 false-positive, <strong>zero hallucinated citations</strong> — for about a cent. The plan survived with an ~11-sentence patch, and what it reviewed (the pre-send guard, the three-valued verdict) is now part of this plugin.</p>
+          <div class="outcome">
+            <span class="chip">16/16 citations verified</span>
+            <span class="chip">0 hallucinations</span>
+            <span class="chip">~$0.01</span>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -512,7 +532,7 @@
         <p>Fork the repo and drop a <code>SKILL.md</code> next to <code>/interceptor</code> and <code>/debate</code>. Same plugin, your own choreography of the loop.</p>
       </div>
     </div>
-    <div class="xnote">Update: GLM-5.2 now ships at its full <strong>1M-token context</strong> and with <strong>OpenRouter reasoning</strong> on by default (xhigh, dialable per call) — both wired in and verified live against the running server (see the real cases above). Reasoning rides a minimal, SHA-pinned fork of PAL; every non-flagged model stays byte-identical to upstream.</div>
+    <div class="xnote">Update: GLM-5.2 now ships at its full <strong>1M-token context</strong> and with <strong>OpenRouter reasoning</strong> on by default (xhigh, dialable per call) — both wired in and verified live against the running server (see the real cases above). Reasoning rides a minimal, SHA-pinned fork of PAL; every non-flagged model stays byte-identical to upstream. Sep 2026: a <strong>pre-send secrets guard</strong> hard-fails before any payload leaves the machine, <code>/debate</code> ends in a <strong>three-valued verdict</strong> (GO / conditional / NO-GO, with residual disagreements escalated to the human instead of papered over), and <strong>7 models</strong> are reasoning-flagged.</div>
   </div>
 </section>
 
