@@ -34,8 +34,14 @@ honest.
   prompt: captures project context, diagnoses gaps, optionally has the second model draft/red-team
   the prompt, returns it for review. Advisory — it never executes the task.
 - **`/cross-model-toolkit:debate <decision>`** — Claude forms a position, the second model attacks
-  it under an *evidence gate*, Claude adjudicates claim-by-claim, then synthesizes a verdict.
-  Capped at 2–3 rounds (debate amplifies shared bias after round 1).
+  it under an *evidence gate*, Claude adjudicates claim-by-claim, then synthesizes a tri-valued
+  verdict (`APROBADO` / `APROBADO-CON-CONDICIONES` / `RECHAZADO`), capped at 3 rounds (debate
+  amplifies shared bias after round 1).
+
+**3. A pre-send secrets guard** — `scripts/pal_pre_send_check.py` scans the exact bytes that
+would leave the machine (payload files + composed prompt) against a filename blacklist and secret
+regexes, hard-fails before the send, and prints token/cost estimates against a committed price
+table. The `debate` and `interceptor` skills invoke it automatically; exit 1 = do not send.
 
 ---
 

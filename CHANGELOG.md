@@ -4,6 +4,33 @@ All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the `version` field of
 `plugins/cross-model-toolkit/.claude-plugin/plugin.json`. Dates from git history.
 
+## [1.4.0] — 2026-09-17
+
+### Added
+- **Pre-send secrets guard** (`scripts/pal_pre_send_check.py` + `config/pal_price_table.json`):
+  scans the exact outgoing payload (files + composed prompt) against a filename blacklist and 10
+  secret regexes, hard-fails (exit 1) before the send, and prints token/cost estimates (input +
+  2x output allowance) from a committed, dated price table — `warn` when the table is >90 days
+  old, `skip` per-model when no price is recorded. Optional `--max-tokens` / `--max-usd` enforce
+  pre-committed dossier/cost ceilings (the headless substitute for "may I attach this?"). Both
+  skills invoke it automatically.
+- `deepseek/deepseek-v4.1-flash` to the registry: 1M context, 384K output, multimodal, granular
+  reasoning, all capability flags on ($0.30/M in, $1.20/M out). First live use (fresh-eyes gap
+  review at thinking max) returned 16 findings with zero citation hallucinations.
+
+### Changed
+- **`debate` skill v1.1.0 (hardened):** entry contract requires a *falsifiable* hypothesis + a
+  measurable objective; fixed core of attack axes is a floor-not-ceiling with a recorded
+  extension rule; adversary output contract ([H1..Hn] with severity / failure mechanism /
+  evidence / prescription) with a single retry on non-conformance; verdict is **tri-valued** —
+  an unresolved blocking REAL at the round cap forces `RECHAZADO`; residual disagreements go to
+  a `PENDIENTE-ADJUDICACIÓN-SERGIO` appendix (async escalation); explicit gate-vs-advisory
+  scope; mandatory closing section "what this debate does not evaluate" (4 required categories);
+  user-copy preflight.
+- `interceptor` skill v1.1.0: pre-send check is mandatory before its PAL call.
+- Kimi Code variant deploys user-scope skills as **symlinks** to this repo (they were manual
+  copies that silently diverged); drift-check flow kept as fallback.
+
 ## [1.3.0] — 2026-09-02
 
 ### Changed

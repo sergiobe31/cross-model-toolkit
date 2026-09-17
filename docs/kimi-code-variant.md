@@ -58,9 +58,21 @@ The project's `.mcp.json` then points the `pal` server at that script:
 
 When the registry is updated here (overlay edit + `build_registry.py`), copy the regenerated
 `pal_openrouter_models.json` to the project's `config/`. When the PAL fork SHA is bumped, bump it
-in **both** this plugin's `.mcp.json` and the project's `mcp/pal_server.sh`. The skills under
-`~/.kimi-code/skills/` are a manual port — re-sync them from `plugins/.../skills/` when they
-change, adjusting only the tool namespace (`mcp__pal__*`) and reference paths.
+in **both** this plugin's `.mcp.json` and the project's `mcp/pal_server.sh`.
+
+**User-scope skills: symlink, don't copy (since v1.4.0).** The skills/references under
+`~/.kimi-code/skills/` used to be a manual port that silently diverged from the canonical
+versions. Deploy them as symlinks instead so they always track this repo:
+
+```
+rm -rf ~/.kimi-code/skills/{debate,interceptor,pal-references}
+ln -s /path/to/cross-model-toolkit/plugins/cross-model-toolkit/skills/debate        ~/.kimi-code/skills/debate
+ln -s /path/to/cross-model-toolkit/plugins/cross-model-toolkit/skills/interceptor   ~/.kimi-code/skills/interceptor
+ln -s /path/to/cross-model-toolkit/plugins/cross-model-toolkit/references           ~/.kimi-code/skills/pal-references
+```
+
+If you must keep file copies (e.g. the repo lives on another volume), re-sync from
+`plugins/.../skills/` on every change and use the drift check below.
 
 To detect drift instead of waiting for it to bite, run:
 

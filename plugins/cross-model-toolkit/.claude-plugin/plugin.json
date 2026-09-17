@@ -1,7 +1,7 @@
 {
   "name": "cross-model-toolkit",
-  "description": "Cross-model collaboration: a second model via the PAL MCP (any OpenRouter model; GLM-5.2 by default) + /interceptor (idea→prompt) + /debate (adversarial chamber), with claim-by-claim adjudication.",
-  "version": "1.3.0",
+  "description": "Cross-model collaboration: a second model via the PAL MCP (any OpenRouter model; GLM-5.2 by default) + /interceptor (idea→prompt) + /debate (adversarial chamber, tri-valued verdict) + pre-send secrets guard, with claim-by-claim adjudication.",
+  "version": "1.4.0",
   "author": {
     "name": "Sergio"
   },

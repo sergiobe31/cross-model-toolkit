@@ -26,6 +26,27 @@ Default tool: **`mcp__pal__chat`**.
 - **`absolute_file_paths`:** pass relevant files this way for grounding instead of pasting large
   contents into the prompt.
 
+## Pre-send check (hard-fail, before every hand-off)
+
+Before ANY PAL call that includes files or pasted content, export the composed prompt to a temp
+file and run:
+
+```
+python3 <plugin-root>/scripts/pal_pre_send_check.py --payload <files...> --prompt-file <prompt.txt> --model <slug> [--max-tokens N] [--max-usd X]
+```
+
+- Scans the **exact bytes that would leave** (payload files + composed prompt) against a
+  blacklist of filenames (`.env`, keys, credentials, `*secret*`…) and 10 secret regexes
+  (OpenRouter/Anthropic/OpenAI/AWS/GitHub/GitLab/Slack tokens, JWTs, private-key blocks,
+  credential assignments). Prints a token estimate and a cost estimate (input + 2x output
+  allowance) from the committed price table `config/pal_price_table.json`.
+- **Exit 1 = abort pre-send** — do not send, fix the payload. Exit 0 = safe to send.
+- Pass `--max-tokens` / `--max-usd` to enforce a pre-committed dossier/cost ceiling (the
+  headless substitute for a "may I attach this?" question).
+- It is a **script, not a mental grep** — in a headless flow nobody verifies that a mental grep
+  ran. The debate and interceptor skills invoke it automatically; so should any future skill
+  that hands content to PAL.
+
 ## Graph grounding (optional, for mapped codebases)
 
 When the question is structural and cross-module ("how does X flow into Y?", "is this design
