@@ -43,9 +43,43 @@ python3 <plugin-root>/scripts/pal_pre_send_check.py --payload <files...> --promp
 - **Exit 1 = abort pre-send** — do not send, fix the payload. Exit 0 = safe to send.
 - Pass `--max-tokens` / `--max-usd` to enforce a pre-committed dossier/cost ceiling (the
   headless substitute for a "may I attach this?" question).
+- **Ledger mode** (`--ledger`, or env `PAL_LEDGER=1`; `--no-ledger` wins over the env): also
+  enforces a mechanical check — every `--mcp-path` must canonically equal a `--payload` or a
+  `--declared-extra` path — and appends one record to the send ledger (below). In ledger mode
+  `--stdin` is forbidden: the prompt must go via `--prompt-file`.
+- **Guardrail context:** calls inside the Guardrail workflow (project `AGENTS.md`) always run
+  with `--ledger`, with `--plan-manifest <manifest.json>` (mandatory there), and with one
+  `--mcp-path` per path passed as `absolute_file_paths` to the PAL call. The manifest is created
+  in planning, before the first review round:
+  `python3 <plugin-root>/scripts/pal_plan_manifest.py --file <plan.md> [--file ...] --out <manifest.json>`.
+  Its `aggregate_sha256` is invariant to the order of `--file` arguments — keep the aggregate
+  line with the plan.
 - It is a **script, not a mental grep** — in a headless flow nobody verifies that a mental grep
   ran. The debate and interceptor skills invoke it automatically; so should any future skill
   that hands content to PAL.
+
+### Send ledger
+
+One JSONL line per run in ledger mode, appended to `<plugin-root>/state/pal_send_ledger.jsonl`
+(prompt copies in `<plugin-root>/state/prompts/<run_id>_<ts>.prompt.txt`). Fields: `run_id`
+(generated `YYYYMMDD-HHMMSS-xxxxxx`, or `--run-id`; printed as `[pal-pre-send] run-id: …`),
+`ts` (ISO 8601 local), `model`, `verdict` (`ok` / `hard_fail` / `usage_error`), `prompt`
+(`{sha256, copy_path}`, null without prompt), `payloads` (`[{path, realpath, sha256, inode,
+size, mtime}]`), `mcp_paths`, `declared_extra`, `plan_manifest` (`{path, sha256}`, null without
+`--plan-manifest`), `exclusions` (`{missing_from_payload, extra_in_payload}` from a canonical-path
+diff against the manifest, null without it), `est_tokens`, `est_cost_usd`, `failures` (all
+findings: blacklist / secret / budget / mcp-path / plan-manifest).
+
+- The state dir is anchored to the script (`<plugin-root>/state`); env `PAL_STATE_DIR` overrides
+  it (test hook only).
+- The ledger rotates above 5 MB (`pal_send_ledger.1.jsonl`, previous backup overwritten) and is
+  written under an exclusive `flock` with a single `os.write` per record.
+- **Fail-closed:** an unwritable ledger or prompt copy, or a record over 64 KB, is itself a
+  HARD-FAIL (exit 1 = no send) — a guard that cannot record its verdict blocks the hand-off.
+
+**Residual scope (declared):** the `--mcp-path` check verifies the paths the caller *declared*;
+it cannot see what the actual MCP call carries — structural binding (a wrapper that injects the
+flags) is iteration 2.
 
 ## Graph grounding (optional, for mapped codebases)
 

@@ -72,10 +72,23 @@ in the deliberation so the core can absorb it.
 **Pre-send check first (hard-fail):** before ANY PAL call that includes files or pasted content,
 export the composed prompt to a temp file and run
 `python3 <plugin-root>/scripts/pal_pre_send_check.py --payload <files...> --prompt-file <prompt.txt> --model <slug> [--max-tokens N] [--max-usd X]`
-(add `--payload`/`--stdin` for the prompt text too). Exit 1 = **abort pre-send** — blacklisted
-filename, secret-pattern hit, or pre-committed budget exceeded. This scans the exact bytes that
-would leave; it is a script, not a mental grep, because in headless nobody verifies a mental grep
-ran.
+Exit 1 = **abort pre-send** — blacklisted filename, secret-pattern hit, pre-committed budget
+exceeded, or (in ledger mode, below) an uncovered `--mcp-path` or ledger write failure. This
+scans the exact bytes that would leave; it is a script, not a mental grep, because in headless
+nobody verifies a mental grep ran.
+
+**Ledger mode — mandatory in Guardrail context:** when this debate runs inside the Guardrail
+workflow (project `AGENTS.md`), the call ALWAYS carries `--ledger`, `--plan-manifest
+<manifest.json>`, and one `--mcp-path <path>` per path that goes into `absolute_file_paths` of
+the PAL call. `--stdin` is forbidden in ledger mode — the prompt always goes via `--prompt-file`.
+Each run appends one JSONL record to `<plugin-root>/state/pal_send_ledger.jsonl` (prompt copies
+in `<plugin-root>/state/prompts/`): it carries the run_id (printed as `[pal-pre-send] run-id: …`),
+sha256 of prompt and payloads, the mcp_paths, and `exclusions` derived by diffing the payloads
+against the manifest. In Guardrail the manifest is created in planning, BEFORE the first review
+round:
+`python3 <plugin-root>/scripts/pal_plan_manifest.py --file <plan.md> [--file ...] --out <manifest.json>`
+— keep its `aggregate` line with the plan. In ad-hoc debates outside the Guardrail, `--ledger`
+is opt-in. Full contract: `references/pal-call-conventions.md`.
 
 Hand your position + the context to the second model via the standard call (see
 `references/pal-call-conventions.md`), framed to **attack**: find missing constraints, errors,
@@ -155,9 +168,18 @@ output is adjudicated like any other.
 
 Respond in the user's language.
 
-## Optional — persist the deliberation
-If the user wants a record, write the debate to `.claude/deliberations/<slug>.md` (position →
-adjudicated points → verdict). Useful for auditability and for resuming a decision later.
+## Persist the deliberation (mandatory in Guardrail context)
+In **Guardrail context** (project `AGENTS.md` workflow) persisting is not optional: write the
+debate to `.kimi-code/deliberations/<slug>.md` with:
+- a header carrying the pre-send **run_id** (from the ledger output) + the sha256 of the payload
+  sent;
+- the **verbatim raw transcript of EVERY adversary round** — with that round's `continuation_id`,
+  timestamp, and the sha256 of that round's raw output — recorded BEFORE the adjudication;
+- the adjudication, citing the round id of each finding.
+
+Outside the Guardrail context, persisting stays optional — same format recommended. Useful for
+auditability and for resuming a decision later. (The old `.claude/deliberations/` path is retired;
+if you find a deliberation there, move it to `.kimi-code/deliberations/`.)
 
 ## Provenance (design notes)
 Loop structure adapts the evidence-gate / decision-framing / deliberation-persistence ideas from
