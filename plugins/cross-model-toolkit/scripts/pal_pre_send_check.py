@@ -250,6 +250,9 @@ def run_check(
     model=None,
     mcp_paths=(),
     declared_extra=(),
+    coverage_extra=(),         # modo guard: paths añadidos al conjunto de cobertura
+                               # (processed ∪ history_files) sin ser payload del delta;
+                               # el CLI nunca lo pasa -> bit-identidad intacta
     plan_manifest=None,
     ledger_mode=False,
     run_id=None,               # si None y ledger_mode: gen_run_id()
@@ -272,6 +275,12 @@ def run_check(
     Raises UsageInputError (caller maps to exit 2 + usage-error ledger entry;
     main() has already done the existence checks this corresponds to) and
     LedgerWriteError (caller maps to exit 1 + stderr HARD-FAIL).
+
+    Guard mode: ``coverage_extra`` extends the coverage set — its canonized
+    paths count for the mcp-path check AND for the plan-manifest exclusions
+    (``missing_from_payload``/``extra_in_payload`` are computed against
+    ``payload_canon | coverage_canon``). The CLI never passes it, so CLI
+    behavior stays bit-identical.
     """
     if state is None:
         state = state_dir()
@@ -341,7 +350,8 @@ def run_check(
     if ledger_mode:
         payload_canon = {e["realpath"] for e in payload_entries}
         declared_canon = {canon(p) for p in declared_extra}
-        covered = payload_canon | declared_canon
+        coverage_canon = {canon(p) for p in coverage_extra}
+        covered = payload_canon | declared_canon | coverage_canon
         for path in mcp_paths:
             if canon(path) not in covered:
                 failures.append(("mcp-path", path, "outside payload/declared-extra",
@@ -405,9 +415,10 @@ def run_check(
                 with open(plan_manifest, encoding="utf-8") as fh:
                     manifest = json.load(fh)
                 manifest_paths = {canon(f["path"]) for f in manifest.get("files", [])}
+                guard_covered = payload_canon | coverage_canon
                 exclusions = {
-                    "missing_from_payload": sorted(manifest_paths - payload_canon),
-                    "extra_in_payload": sorted(payload_canon - manifest_paths),
+                    "missing_from_payload": sorted(manifest_paths - guard_covered),
+                    "extra_in_payload": sorted(guard_covered - manifest_paths),
                 }
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 failures.append(("plan-manifest", plan_manifest, "unreadable",
