@@ -268,3 +268,67 @@ def test_invalid_manifest_is_failure_not_crash(tmp_path):
     e = read_ledger(state)[0]
     assert any(f["kind"] == "plan-manifest" for f in e["failures"])
     assert e["verdict"] == "hard_fail"
+
+
+MANIFEST_SCRIPT = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "scripts", "pal_plan_manifest.py"))
+
+
+def run_manifest(args, cwd=None):
+    return subprocess.run(
+        [sys.executable, MANIFEST_SCRIPT] + args,
+        capture_output=True, text=True, cwd=cwd)
+
+
+def aggregate_contract(*paths):
+    pairs = sorted(
+        (os.path.realpath(os.path.abspath(p)), hashlib.sha256(open(p, "rb").read()).hexdigest())
+        for p in paths)
+    return hashlib.sha256("".join(d for _, d in pairs).encode("ascii")).hexdigest()
+
+
+def test_manifest_golden_aggregate(tmp_path):
+    fa = tmp_path / "plan_a.md"
+    fb = tmp_path / "plan_b.md"
+    fa.write_text("# plan A\nstep one\n")
+    fb.write_text("# plan B\nstep two\n")
+    out = tmp_path / "manifest.json"
+    r = run_manifest(["--file", str(fa), "--file", str(fb), "--out", str(out)])
+    assert r.returncode == 0, r.stderr
+    expected = aggregate_contract(fa, fb)
+    assert expected == hashlib.sha256(
+        (hashlib.sha256(fa.read_bytes()).hexdigest()
+         + hashlib.sha256(fb.read_bytes()).hexdigest()).encode("ascii")
+    ).hexdigest()
+    manifest = json.loads(out.read_text())
+    assert manifest["aggregate_sha256"] == expected
+    assert len(manifest["files"]) == 2
+    assert {f["path"] for f in manifest["files"]} == {str(fa), str(fb)}
+    for f in manifest["files"]:
+        src = tmp_path / os.path.basename(f["path"])
+        assert f["sha256"] == hashlib.sha256(src.read_bytes()).hexdigest()
+
+
+def test_manifest_order_invariant(tmp_path):
+    fa = tmp_path / "a.md"
+    fb = tmp_path / "b.md"
+    fa.write_text("alpha\n")
+    fb.write_text("bravo charlie delta\n")
+    out1 = tmp_path / "m1.json"
+    out2 = tmp_path / "m2.json"
+    r1 = run_manifest(["--file", str(fa), "--file", str(fb), "--out", str(out1)])
+    r2 = run_manifest(["--file", str(fb), "--file", str(fa), "--out", str(out2)])
+    assert r1.returncode == 0 and r2.returncode == 0
+    m1 = json.loads(out1.read_text())
+    m2 = json.loads(out2.read_text())
+    m1.pop("created")
+    m2.pop("created")
+    assert m1 == m2
+
+
+def test_manifest_missing_file_exit_2(tmp_path):
+    out = tmp_path / "manifest.json"
+    r = run_manifest(["--file", str(tmp_path / "nope.md"), "--out", str(out)])
+    assert r.returncode == 2
+    assert not out.exists()
+
