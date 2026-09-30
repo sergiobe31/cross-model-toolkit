@@ -72,8 +72,11 @@ findings: blacklist / secret / budget / mcp-path / plan-manifest).
 
 - The state dir is anchored to the script (`<plugin-root>/state`); env `PAL_STATE_DIR` overrides
   it (test hook only).
-- The ledger rotates above 5 MB (`pal_send_ledger.1.jsonl`, previous backup overwritten) and is
-  written under an exclusive `flock` with a single `os.write` per record.
+- The ledger rotates above 5 MB (`pal_send_ledger.1.jsonl`, previous backup
+  overwritten). Rotation and append both happen inside a single critical section
+  guarded by `fcntl.flock(LOCK_EX)` on a lateral `state/ledger.lock` file — two
+  concurrent runs cannot race the rotation — and each record goes out as a single
+  `os.write`.
 - **Fail-closed:** an unwritable ledger or prompt copy, or a record over 64 KB, is itself a
   HARD-FAIL (exit 1 = no send) — a guard that cannot record its verdict blocks the hand-off.
 

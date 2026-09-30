@@ -137,21 +137,26 @@ def sha256_file(path: str) -> str:
 def write_ledger(state: str, entry: dict, prompt_copy) -> str:
     try:
         os.makedirs(os.path.join(state, "prompts"), exist_ok=True)
-        if prompt_copy is not None:
-            with open(prompt_copy[0], "w", encoding="utf-8") as fh:
-                fh.write(prompt_copy[1])
         line = (json.dumps(entry, separators=(",", ":")) + "\n").encode("utf-8")
         if len(line) > LEDGER_MAX_LINE_BYTES:
             return f"ledger line exceeds {LEDGER_MAX_LINE_BYTES} bytes"
+        if prompt_copy is not None:
+            with open(prompt_copy[0], "w", encoding="utf-8") as fh:
+                fh.write(prompt_copy[1])
         ledger = os.path.join(state, "pal_send_ledger.jsonl")
-        if os.path.exists(ledger) and os.path.getsize(ledger) > LEDGER_ROTATE_BYTES:
-            os.replace(ledger, os.path.join(state, "pal_send_ledger.1.jsonl"))
-        fd = os.open(ledger, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        lock_fd = os.open(os.path.join(state, "ledger.lock"),
+                          os.O_WRONLY | os.O_CREAT, 0o644)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            os.write(fd, line)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if os.path.exists(ledger) and os.path.getsize(ledger) > LEDGER_ROTATE_BYTES:
+                os.replace(ledger, os.path.join(state, "pal_send_ledger.1.jsonl"))
+            fd = os.open(ledger, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                os.write(fd, line)
+            finally:
+                os.close(fd)
         finally:
-            os.close(fd)
+            os.close(lock_fd)
     except OSError as exc:
         return f"ledger write failed: {exc}"
     return None
@@ -189,14 +194,9 @@ def main():
         print("[pal-pre-send] --stdin cannot be combined with ledger mode", file=sys.stderr)
         return 2
 
-    if not args.payload and not args.prompt_file and not args.stdin:
-        print("[pal-pre-send] nothing to scan (--payload / --prompt-file / --stdin)", file=sys.stderr)
-        return 2
-
     run_id = None
     if ledger_mode:
         run_id = args.run_id or gen_run_id()
-        print(f"[pal-pre-send] run-id: {run_id}")
 
     failures = []  # (kind, where, label, detail)
     state = state_dir()
@@ -221,6 +221,14 @@ def main():
         }
         write_ledger(state, entry, None)
 
+    if not args.payload and not args.prompt_file and not args.stdin:
+        print("[pal-pre-send] nothing to scan (--payload / --prompt-file / --stdin)", file=sys.stderr)
+        usage_error_entry()
+        return 2
+
+    if ledger_mode:
+        print(f"[pal-pre-send] run-id: {run_id}")
+
     # 1) blacklist by filename (basename and path), then content scan
     texts = []  # (name, content)
     payload_entries = []
@@ -232,13 +240,20 @@ def main():
         hit = blacklisted(path)
         if hit:
             failures.append(("blacklist", path, hit, "blacklisted filename must not be sent"))
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            texts.append((path, fh.read()))
-        st = os.stat(path)
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+            st = os.stat(path)
+            digest = sha256_file(path)
+        except OSError as exc:
+            print(f"[pal-pre-send] payload unreadable: {path}: {exc}", file=sys.stderr)
+            usage_error_entry()
+            return 2
+        texts.append((path, content))
         payload_entries.append({
             "path": path,
             "realpath": canon(path),
-            "sha256": sha256_file(path),
+            "sha256": digest,
             "inode": st.st_ino,
             "size": st.st_size,
             "mtime": st.st_mtime,
@@ -250,8 +265,13 @@ def main():
             print(f"[pal-pre-send] prompt file not found: {args.prompt_file}", file=sys.stderr)
             usage_error_entry()
             return 2
-        with open(args.prompt_file, encoding="utf-8", errors="replace") as fh:
-            prompt_content = fh.read()
+        try:
+            with open(args.prompt_file, encoding="utf-8", errors="replace") as fh:
+                prompt_content = fh.read()
+        except OSError as exc:
+            print(f"[pal-pre-send] prompt file unreadable: {args.prompt_file}: {exc}", file=sys.stderr)
+            usage_error_entry()
+            return 2
         texts.append(("<composed-prompt>", prompt_content))
     elif args.stdin:
         texts.append(("<composed-prompt>", sys.stdin.read()))
@@ -259,14 +279,15 @@ def main():
     for name, content in texts:
         failures.extend(iter_findings(name, content))
 
-    # mechanical check: every --mcp-path must be covered by payload or declared-extra
-    payload_canon = {e["realpath"] for e in payload_entries}
-    declared_canon = {canon(p) for p in args.declared_extra}
-    covered = payload_canon | declared_canon
-    for path in args.mcp_path:
-        if canon(path) not in covered:
-            failures.append(("mcp-path", path, "outside payload/declared-extra",
-                             f"{canon(path)} is not a payload nor a declared extra"))
+    # mechanical check (ledger mode only): every --mcp-path must be covered
+    if ledger_mode:
+        payload_canon = {e["realpath"] for e in payload_entries}
+        declared_canon = {canon(p) for p in args.declared_extra}
+        covered = payload_canon | declared_canon
+        for path in args.mcp_path:
+            if canon(path) not in covered:
+                failures.append(("mcp-path", path, "outside payload/declared-extra",
+                                 f"{canon(path)} is not a payload nor a declared extra"))
 
     # 2) token estimate + budget
     total_tokens = sum(est_tokens(t) for _, t in texts)
@@ -307,7 +328,7 @@ def main():
                 f"{run_id}_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.prompt.txt")
             prompt_copy = (copy_path, prompt_content)
             prompt_entry = {
-                "sha256": hashlib.sha256(prompt_content.encode("utf-8")).hexdigest(),
+                "sha256": sha256_file(args.prompt_file),
                 "copy_path": copy_path,
             }
         plan_manifest_entry = None

@@ -11,6 +11,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 SCRIPT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "scripts", "pal_pre_send_check.py"))
 
@@ -69,18 +71,30 @@ def test_ledger_ok_golden_sha256(tmp_path):
     assert e["payloads"][0]["inode"] == payload.stat().st_ino
 
 
-def test_no_ledger_bit_identical_and_no_state(tmp_path):
+def test_no_ledger_bit_identical_against_pre_ledger_golden(tmp_path):
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    old = tmp_path / "pal_pre_send_check_pre_ledger.py"
+    g = subprocess.run(
+        ["git", "show",
+         "4de687a:plugins/cross-model-toolkit/scripts/pal_pre_send_check.py"],
+        capture_output=True, text=True, cwd=repo)
+    if g.returncode != 0:
+        pytest.skip("git show of pre-ledger script unavailable")
+    old.write_text(g.stdout)
     state = tmp_path / "state"
     payload = make_payload(tmp_path)
     prompt = make_prompt(tmp_path)
-    common = ["--payload", str(payload), "--prompt-file", str(prompt)]
-    env = {"PAL_STATE_DIR": str(state)}
-    r_off = run_cli(common, env_extra=env)
-    r_flag = run_cli(common + ["--no-ledger"], env_extra=env)
-    assert r_off.returncode == 0
-    assert r_flag.returncode == 0
-    assert r_off.stdout == r_flag.stdout
-    assert "run-id" not in r_off.stdout
+    args = ["--payload", str(payload), "--prompt-file", str(prompt),
+            "--max-tokens", "5"]  # max-tokens trips the failure path too
+    env = dict(os.environ)
+    env.pop("PAL_LEDGER", None)
+    env["PAL_STATE_DIR"] = str(state)
+    r_old = subprocess.run([sys.executable, str(old)] + args,
+                           capture_output=True, text=True, env=env)
+    r_new = run_cli(args, env_extra={"PAL_STATE_DIR": str(state)})
+    assert r_old.returncode == r_new.returncode
+    assert r_old.stdout == r_new.stdout
+    assert "run-id" not in r_new.stdout
     assert not (state / "pal_send_ledger.jsonl").exists()
     assert not (state / "prompts").exists()
 
@@ -187,7 +201,8 @@ def test_prompt_copy_sha_matches_entry(tmp_path):
     e = read_ledger(state)[0]
     copy_path = e["prompt"]["copy_path"]
     assert os.path.exists(copy_path)
-    assert hashlib.sha256(open(copy_path, "rb").read()).hexdigest() == e["prompt"]["sha256"]
+    assert e["prompt"]["sha256"] == hashlib.sha256(prompt.read_bytes()).hexdigest()
+    assert open(copy_path, encoding="utf-8").read() == prompt.read_text()
 
 
 def test_mcp_path_relative_normalization(tmp_path):
@@ -208,22 +223,26 @@ def test_concurrent_writes(tmp_path):
     payload = make_payload(tmp_path)
     prompt = make_prompt(tmp_path)
 
-    def one(i):
-        args = ["--payload", str(payload), "--prompt-file", str(prompt),
-                "--ledger", "--run-id", f"run-{i}"]
-        return run_cli(args, env_extra={"PAL_STATE_DIR": str(state)})
+    def one(prefix):
+        def run(i):
+            args = ["--payload", str(payload), "--prompt-file", str(prompt),
+                    "--ledger", "--run-id", f"{prefix}-{i}"]
+            return run_cli(args, env_extra={"PAL_STATE_DIR": str(state)})
+        return run
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        results = list(ex.map(one, range(100)))
+        futs = [ex.submit(one("a"), i) for i in range(100)]
+        futs += [ex.submit(one("b"), i) for i in range(100)]
+        results = [f.result() for f in futs]
     assert all(r.returncode == 0 for r in results)
     lines = (state / "pal_send_ledger.jsonl").read_text().splitlines()
-    assert len(lines) == 100
+    assert len(lines) == 200
     seen = set()
     for line in lines:
         e = json.loads(line)
         seen.add(e["run_id"])
         assert e["verdict"] == "ok"
-    assert seen == {f"run-{i}" for i in range(100)}
+    assert seen == {f"{p}-{i}" for p in "ab" for i in range(100)}
 
 
 def test_env_pal_ledger_enables_and_no_ledger_wins(tmp_path):
@@ -332,3 +351,61 @@ def test_manifest_missing_file_exit_2(tmp_path):
     assert r.returncode == 2
     assert not out.exists()
 
+
+
+def test_mcp_path_ignored_without_ledger_mode(tmp_path):
+    state = tmp_path / "state"
+    payload = make_payload(tmp_path)
+    prompt = make_prompt(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not declared\n")
+    r = run_cli(["--payload", str(payload), "--prompt-file", str(prompt),
+                 "--mcp-path", str(outside)],
+                env_extra={"PAL_STATE_DIR": str(state)})
+    assert r.returncode == 0, r.stderr
+    assert "HARD-FAIL" not in r.stdout
+    assert not (state / "pal_send_ledger.jsonl").exists()
+
+
+def test_ledger_rotation_over_5mb(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    ledger = state / "pal_send_ledger.jsonl"
+    ledger.write_bytes(b"x" * (5 * 1024 * 1024 + 100))
+    payload = make_payload(tmp_path)
+    prompt = make_prompt(tmp_path)
+    r = run_cli(base_args(tmp_path, state, payload, prompt),
+                env_extra={"PAL_STATE_DIR": str(state)})
+    assert r.returncode == 0, r.stderr
+    backup = state / "pal_send_ledger.1.jsonl"
+    assert backup.exists()
+    assert backup.stat().st_size > 5 * 1024 * 1024
+    lines = ledger.read_text().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["run_id"] == "test-run"
+
+
+def test_directory_payload_usage_error_no_traceback(tmp_path):
+    state = tmp_path / "state"
+    a_dir = tmp_path / "a_directory"
+    a_dir.mkdir()
+    prompt = make_prompt(tmp_path)
+    r = run_cli(["--payload", str(a_dir), "--prompt-file", str(prompt),
+                 "--ledger", "--run-id", "dirpayload"],
+                env_extra={"PAL_STATE_DIR": str(state)})
+    assert r.returncode == 2
+    assert "Traceback" not in r.stderr
+    entries = read_ledger(state)
+    assert len(entries) == 1
+    assert entries[0]["verdict"] == "usage_error"
+
+
+def test_nothing_to_scan_ledger_usage_error_entry(tmp_path):
+    state = tmp_path / "state"
+    r = run_cli(["--ledger", "--run-id", "empty"],
+                env_extra={"PAL_STATE_DIR": str(state)})
+    assert r.returncode == 2
+    entries = read_ledger(state)
+    assert len(entries) == 1
+    assert entries[0]["verdict"] == "usage_error"
+    assert entries[0]["run_id"] == "empty"
