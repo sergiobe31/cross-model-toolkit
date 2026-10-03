@@ -8,6 +8,12 @@ diferencias: VACÍA). Un segundo test DOCUMENTA el comportamiento real de una
 ronda de continuación con fichero nuevo (rama efectiva de base.py:335 vs
 reconstrucción in-tool, llegada del fichero nuevo, add_turn doble) — el
 veredicto empírico de la tensión estática/empírica del plan §2.2.
+Un tercer test (Fase 4, 2026-10-03) ejecuta DOS RONDAS GUARDED contra el fork
+real (hilo fresco + continuación con fichero nuevo bajo STRICT=0) y asevera
+sobre la entrada de ledger de la ronda 2: el guard observó la continuación,
+history_files contiene ambos ficheros (canónicos) y la fórmula de perdidos no
+produce falsos positivos; el golden de paridad además fija que el hook HTTP
+sí se instala contra el SDK real vía `client._client` (H1).
 
 Ejecución (opt-in):
 
@@ -198,14 +204,16 @@ def test_request_body_parity_guarded_vs_bare(fork_env, tmp_path, payload_dir):
     assert len(parsed["messages"]) >= 2  # system + user
     assert "hola guard" in json.dumps(parsed["messages"])  # fichero embebido
 
-    # NOTA (veredicto del golden): el dump PAL_REQ_DUMP del hook HTTP NO se
-    # instala contra el client REAL del SDK de OpenAI — el provider expone el
-    # objeto OpenAI (sin `event_hooks`; solo el httpx.Client interno los
-    # tiene) e install_http_hook lo registra como no instalable. La captura
-    # autoritativa del body aquí es el RecordingTransport (equivalente
-    # permitido por el plan §4), no el dump. Consecuencia declarada para el
-    # informe: request_sent_var no se activa con el fork real y la
-    # clasificación pre/post_send_failed del sidecar degrada a pre_send.
+    # Fix 1 (H1): el hook HTTP SÍ se instala contra el client real del SDK —
+    # install_http_hook prueba client.event_hooks y, si no existen, el
+    # httpx.Client interno bajo client._client (openai_compatible.py:~312).
+    # El transport mockeado coexiste con los event hooks de httpx, así que el
+    # hook dispara y request_sent_var clasifica pre/post_send de verdad.
+    provider = ModelProviderRegistry.get_provider(ProviderType.OPENROUTER)
+    assert provider._pal_guard_http_hook_installed is True
+    inner = getattr(provider.client, "_client", None)
+    assert inner is not None, "el SDK OpenAI debe exponer su httpx.Client en _client"
+    assert guard._http_request_hook in inner.event_hooks["request"]
 
     # El sidecar certifica la respuesta guarded con el hash canónico y
     # pal_guard_verify cierra el loop deliberación↔sidecar.
@@ -341,4 +349,71 @@ add_turn duplicado en el thread             : {add_turn_double} (turnos user ron
     assert file_b_arrived is True
     assert file_b_via_history is True
     assert file_b_via_note is True
+
+
+def test_guarded_continuation_round_observed(fork_env, tmp_path, payload_dir,
+                                              monkeypatch):
+    """Fix 6 (H4): dos rondas GUARDED contra el fork real con transport
+    mockeado. Ronda 1: hilo fresco con fichero A. Ronda 2: continuation_id +
+    fichero B nuevo bajo PAL_GUARD_STRICT=0 (Fix 2 impone hilo fresco para
+    continuación+ficheros bajo STRICT). Asevera contra la entrada de ledger
+    de la ronda 2: el guard observó la continuación real, history_files
+    contiene A y B (paths canónicos — el fork embebe /private/tmp para
+    requests /tmp), y la fórmula de perdidos no reporta falsos positivos.
+    Valida _parse_history_files (anclado al marcador CONVERSATION HISTORY),
+    el END marker y la canonización contra el formato real de
+    conversation_memory.py."""
+    monkeypatch.setenv("PAL_GUARD_STRICT", "0")
+    transport, state, _dump = fork_env
+    fA = _payload_file(payload_dir, "guarded_A.py", "GUARDED_A = 111\n")
+    fB = _payload_file(payload_dir, "guarded_B.py", "GUARDED_B = 222\n")
+
+    guarded = guard.GuardedChatTool()
+    args1 = {
+        "prompt": "Primera ronda guarded: analiza el fichero A.",
+        "absolute_file_paths": [str(fA)],
+        "working_directory_absolute_path": payload_dir,
+        "model": MODEL,
+        "thinking_mode": "low",
+    }
+    r1 = _run(guarded.execute(dict(args1)))
+    data1 = json.loads(r1[0].text)
+    assert data1["status"] == "continuation_available"
+    continuation_id = data1["continuation_offer"]["continuation_id"]
+
+    args2 = {
+        "prompt": "Segunda ronda guarded: ahora también el fichero B.",
+        "absolute_file_paths": [str(fB)],
+        "working_directory_absolute_path": payload_dir,
+        "model": MODEL,
+        "thinking_mode": "low",
+        "continuation_id": continuation_id,
+    }
+    import asyncio
+    enhanced = asyncio.new_event_loop().run_until_complete(
+        pal_server.reconstruct_thread_context(dict(args2)))
+    # forma real del fork: el historial va PRIMERO (server.py:1230)
+    assert enhanced["prompt"].startswith(guard.CONVERSATION_HISTORY_MARKER)
+    n_requests_before = len(transport.requests)
+    r2 = _run(guarded.execute(enhanced))
+    assert json.loads(r2[0].text)["status"] == "continuation_available"
+    assert len(transport.requests) == n_requests_before + 1
+
+    entries = [json.loads(l) for l in
+               (state / "pal_send_ledger.jsonl").read_text().splitlines() if l]
+    guarded_entries = [e for e in entries if e.get("guard")]
+    assert len(guarded_entries) == 2, \
+        f"el guard debió auditar ambas rondas: {entries!r}"
+    e2 = guarded_entries[-1]
+    history_canon = {os.path.realpath(p) for p in e2["history_files"]}
+    assert os.path.realpath(fA) in history_canon
+    assert os.path.realpath(fB) in history_canon
+    assert e2["files_lost_to_dedup_bug"] == []
+    assert e2["processed_files_delta"] == []  # B filtrado por el thread
+
+    sidecar = [json.loads(l) for l in
+               (state / "pal_guard_responses.jsonl").read_text().splitlines()
+               if l]
+    ok = [r for r in sidecar if r.get("phase") == "response_ok"]
+    assert len(ok) == 2, f"se esperaban 2 response_ok: {sidecar!r}"
 

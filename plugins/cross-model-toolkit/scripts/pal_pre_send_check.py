@@ -254,6 +254,9 @@ def run_check(
                                # (processed ∪ history_files) sin ser payload del delta;
                                # el CLI nunca lo pasa -> bit-identidad intacta
     plan_manifest=None,
+    coverage_fail_hard=False,  # modo guard: missing_from_payload del plan
+                               # bundle pasa a failure (verdict hard_fail);
+                               # el CLI nunca lo pasa -> bit-identidad intacta
     ledger_mode=False,
     run_id=None,               # si None y ledger_mode: gen_run_id()
     max_tokens=None,
@@ -279,8 +282,11 @@ def run_check(
     Guard mode: ``coverage_extra`` extends the coverage set — its canonized
     paths count for the mcp-path check AND for the plan-manifest exclusions
     (``missing_from_payload``/``extra_in_payload`` are computed against
-    ``payload_canon | coverage_canon``). The CLI never passes it, so CLI
-    behavior stays bit-identical.
+    ``payload_canon | coverage_canon``). ``coverage_fail_hard`` (guard mode
+    only) additionally turns every ``missing_from_payload`` path into a
+    hard failure, so a blocked send is ledgered as ``verdict:"hard_fail"``
+    instead of "ok". The CLI never passes either flag, so CLI behavior
+    stays bit-identical; ``exclusions`` is emitted the same in both modes.
     """
     if state is None:
         state = state_dir()
@@ -423,6 +429,14 @@ def run_check(
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 failures.append(("plan-manifest", plan_manifest, "unreadable",
                                  f"cannot read plan manifest: {exc}"))
+        if coverage_fail_hard and exclusions:
+            # guard mode: the plan bundle is a pre-committed contract — a
+            # declared file missing from the covered set blocks the send and
+            # the ledger must say hard_fail, not "ok"
+            for p in exclusions.get("missing_from_payload") or []:
+                failures.append(("plan-manifest", p, "missing_from_payload",
+                                 "declared in the plan bundle but not sent "
+                                 "nor in history"))
         entry = {
             "run_id": run_id,
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),

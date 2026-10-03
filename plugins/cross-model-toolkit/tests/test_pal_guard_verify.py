@@ -124,8 +124,26 @@ def test_extract_response_text_rules():
     joined = verify.extract_response_text(
         '{"content": [{"text": "a"}, {"text": "b"}]}')
     assert joined == "a\nb"
-    # JSON list / TextContent dict: verbatim
+    # serialized TextContent dict (rule 2, Fix 7): the text field itself
+    assert verify.extract_response_text(
+        '{"type": "text", "text": "the payload"}') == "the payload"
+    # JSON list / any other dict: verbatim
     assert verify.extract_response_text('["x"]') == '["x"]'
+    assert verify.extract_response_text('{"other": 1}') == '{"other": 1}'
+
+
+def test_textcontent_dict_form_verifies(tmp_path, monkeypatch):
+    """A response saved as the serialized TextContent dict ({"type":"text",
+    "text": <ToolOutput JSON>}) hashes the inner text — Fix 7: previously
+    this form hashed the whole file and produced a false mismatch."""
+    monkeypatch.setenv("PAL_STATE_DIR", str(tmp_path / "state"))
+    state = str(tmp_path / "state")
+    inner = json.dumps({"status": "success", "content": "answer"})
+    digest = hashlib.sha256(inner.encode("utf-8")).hexdigest()
+    f = tmp_path / "textcontent.json"
+    f.write_text(json.dumps({"type": "text", "text": inner}), encoding="utf-8")
+    _sidecar(state, "run-7", digest)
+    assert verify.main(["--run-id", "run-7", "--response-json", str(f)]) == 0
 
 
 def test_bare_tooloutput_dump_verifies(tmp_path, monkeypatch):

@@ -646,7 +646,9 @@ def test_branch_b_preembedded_prompt_audited_as_is(tmp_path):
     assert entry["payloads"] == []  # nothing embedded this round
 
 
-def test_branch_c_intool_reconstruction_audits_composed_prompt(tmp_path):
+def test_branch_c_intool_reconstruction_audits_composed_prompt(tmp_path, monkeypatch):
+    monkeypatch.setenv("PAL_GUARD_STRICT", "0")  # Fix 2: continuation+files
+                                                 # needs the documented opt-out
     f_old = make_file(tmp_path, "old.py", "old content")
     f_new = make_file(tmp_path, "new.py", "new content")
     tid = _cm_create_thread(tool_name="chat")
@@ -654,7 +656,6 @@ def test_branch_c_intool_reconstruction_audits_composed_prompt(tmp_path):
     _cm_commit_files(tid)
     slug = "sess-c"
     # manifest declares only what the history certifies; f_new is undeclared
-    # (a real run would hit the missing_from_payload block — see below)
     make_manifest(tmp_path, slug, [f_old])
     tool = new_tool()
     args = {"prompt": f"[guard-session: {slug}]\nnow review the new file",
@@ -664,15 +665,16 @@ def test_branch_c_intool_reconstruction_audits_composed_prompt(tmp_path):
     asyncio.run(tool.execute(args))
     provider = tool.provider
     sent = provider.calls[0]["prompt"]
-    assert "=== CONVERSATION HISTORY (CONTINUATION) ===" in sent
+    assert sent.startswith(guard.CONVERSATION_HISTORY_MARKER)  # history first
     assert "=== NEW USER INPUT ===" in sent
     (entry,) = ledger_entries(tmp_path)
     assert entry["prompt"]["sha256"] == sha(sent)
     # stale snapshot only has f_old; f_new is claimed by the thread NOTE but
     # NOT embedded (dedup bug shape) -> f_new lands in files_lost_to_dedup_bug
+    # (canonical path — Fix 4)
     assert entry["history_files"] == [f_old]
     assert entry["processed_files_delta"] == []
-    assert entry["files_lost_to_dedup_bug"] == [f_new]
+    assert entry["files_lost_to_dedup_bug"] == [os.path.realpath(f_new)]
 
 
 # --- 2) capture: per-file sha from the blob, no re-read (D3/F2) -------------
@@ -820,6 +822,57 @@ def test_slug_marker_off_first_line_rejected_as_ambiguous(tmp_path):
     assert tool.provider.calls == []
 
 
+def test_strict_continuation_with_files_rejected_fresh_thread(tmp_path):
+    # Fix 2: mechanical enforcement of "round with files ⇒ fresh thread".
+    # In the real MCP path the continuation arrives with prompt already
+    # replaced by history, so a first-line marker is unreachable — the reject
+    # must say so, not "ambiguous marker".
+    f1 = make_file(tmp_path, "x.py", "x")
+    tid = _cm_create_thread(tool_name="chat")
+    tool = new_tool()
+    args = {"prompt": "round 2 with files\n", "continuation_id": tid,
+            "absolute_file_paths": [f1],
+            "working_directory_absolute_path": str(tmp_path)}
+    with pytest.raises(ToolExecutionError) as excinfo:
+        asyncio.run(tool.execute(args))
+    assert tool.provider.calls == []
+    payload = json.loads(excinfo.value.payload)
+    assert "FRESH" in payload["content"]
+    assert "continuation_id" in payload["content"]
+    assert any(f["label"] == "continuation-with-files"
+               for f in payload["metadata"]["failures"])
+    (sc,) = sidecar_entries(tmp_path)
+    assert sc["phase"] == "guard_reject"
+
+
+def test_strict_off_continuation_with_files_passes_audited(tmp_path, monkeypatch):
+    monkeypatch.setenv("PAL_GUARD_STRICT", "0")
+    f1 = make_file(tmp_path, "x.py", "x")
+    tid = _cm_create_thread(tool_name="chat")
+    tool = new_tool()
+    args = {"prompt": "round 2 with files\n", "continuation_id": tid,
+            "absolute_file_paths": [f1],
+            "working_directory_absolute_path": str(tmp_path)}
+    asyncio.run(tool.execute(args))
+    assert len(tool.provider.calls) == 1
+    (entry,) = ledger_entries(tmp_path)
+    assert entry["strict"] is False
+    assert entry["verdict"] == "ok"
+
+
+def test_strict_continuation_without_files_passes(tmp_path):
+    # Fix 2 fires only with files: continuation alone is unchanged
+    tid = _cm_create_thread(tool_name="chat")
+    tool = new_tool()
+    args = {"prompt": "plain follow-up\n", "continuation_id": tid,
+            "working_directory_absolute_path": str(tmp_path)}
+    asyncio.run(tool.execute(args))
+    (entry,) = ledger_entries(tmp_path)
+    assert entry["strict"] is True
+    assert entry["verdict"] == "ok"
+    assert len(tool.provider.calls) == 1
+
+
 # --- 7) sidecar phases + fail-open ------------------------------------------
 
 def test_sidecar_response_ok_with_sha_and_continuation(tmp_path):
@@ -835,15 +888,63 @@ def test_sidecar_response_ok_with_sha_and_continuation(tmp_path):
     assert sc["model"] == "stub-model"
 
 
-def test_sidecar_pre_send_failed_when_provider_raises(tmp_path):
-    OpenAICompatibleProvider.raise_exc = ValueError("boom before send")
+def test_sidecar_post_send_failed_when_provider_raises_after_invocation(tmp_path):
+    # Fix 1 (conservative classification): original_called_var is set right
+    # BEFORE the original provider call, so a failure inside the provider
+    # classifies as post_send_failed even without the httpx hook
+    OpenAICompatibleProvider.raise_exc = ValueError("boom inside provider")
     tool = new_tool()
     args = {"prompt": "hello\n", "working_directory_absolute_path": str(tmp_path)}
     with pytest.raises(ToolExecutionError):
         asyncio.run(tool.execute(args))
     (sc,) = sidecar_entries(tmp_path)
+    assert sc["phase"] == "post_send_failed"
+    assert sc["cause_type"] == "ValueError"
+
+
+def test_sidecar_pre_send_failed_before_provider_funnel(tmp_path, monkeypatch):
+    # a failure BEFORE the funnel (here: in _compute_derived) keeps the
+    # pre_send_failed classification — neither the hook nor original fired
+    def _boom(ctx, prompt, system_prompt):
+        raise ValueError("boom before funnel")
+    monkeypatch.setattr(guard, "_compute_derived", _boom)
+    tool = new_tool()
+    args = {"prompt": "hello\n", "working_directory_absolute_path": str(tmp_path)}
+    with pytest.raises(ToolExecutionError):
+        asyncio.run(tool.execute(args))
+    assert tool.provider.calls == []
+    (sc,) = sidecar_entries(tmp_path)
     assert sc["phase"] == "pre_send_failed"
     assert sc["cause_type"] == "ValueError"
+
+
+def test_http_hook_installed_on_primary_event_hooks():
+    # stubs/tests: the client itself exposes event_hooks
+    provider = OpenAICompatibleProvider()
+    _ = provider.client
+    assert provider._pal_guard_http_hook_installed is True
+    assert guard._http_request_hook in provider.client.event_hooks["request"]
+
+
+def test_http_hook_installed_via_internal_sdk_client():
+    # the real SDK `OpenAI` object has no event_hooks; the httpx.Client with
+    # them lives under ._client (H1: without this the hook never installed
+    # against the real fork and every failure degraded to pre_send_failed)
+    class _Inner:
+        def __init__(self):
+            self.event_hooks = {"request": [], "response": []}
+
+    class _SDKLike:
+        def __init__(self):
+            self._client = _Inner()
+
+    provider = OpenAICompatibleProvider()
+    sdk = _SDKLike()
+    provider._client = sdk  # the stub property returns it as-is
+    assert provider.client is sdk
+    assert provider._pal_guard_http_hook_installed is True
+    assert guard._http_request_hook in sdk._client.event_hooks["request"]
+    assert sdk._client.event_hooks["response"] == []  # request hook only
 
 
 def test_sidecar_post_send_failed_after_http_hook_fired(tmp_path):
@@ -930,10 +1031,13 @@ def test_dedup_bug_mixed_budget_and_lost(tmp_path, monkeypatch):
     assert entry["files_skipped_by_budget"] == [b_budget]
     assert entry["history_files"] == [a_old]
     # F4: requested but neither embedded, nor budget-skipped, nor in history
-    assert entry["files_lost_to_dedup_bug"] == [c_lost]
+    # (files_lost_to_dedup_bug reports canonical paths — Fix 4)
+    assert entry["files_lost_to_dedup_bug"] == [os.path.realpath(c_lost)]
 
 
-def test_dedup_lost_file_declared_in_manifest_blocks(tmp_path):
+def test_dedup_lost_file_declared_in_manifest_blocks(tmp_path, monkeypatch):
+    monkeypatch.setenv("PAL_GUARD_STRICT", "0")  # Fix 2: continuation+files
+                                                 # needs the documented opt-out
     a_old = make_file(tmp_path, "a_old.py", "old")
     c_lost = make_file(tmp_path, "c_lost.py", "lost")
     tid = _cm_create_thread(tool_name="chat")
@@ -954,34 +1058,98 @@ def test_dedup_lost_file_declared_in_manifest_blocks(tmp_path):
     labels = [f["label"] for f in payload["metadata"]["failures"]]
     assert "missing_from_payload" in labels
     (entry,) = ledger_entries(tmp_path)
+    # Fix 3: the blocked send is ledgered as hard_fail, not "ok"
+    assert entry["verdict"] == "hard_fail"
+    assert any(f["label"] == "missing_from_payload" for f in entry["failures"])
     assert entry["exclusions"]["missing_from_payload"] == [os.path.realpath(c_lost)]
     assert os.path.realpath(a_old) not in entry["exclusions"]["missing_from_payload"]
 
 
-def test_manifest_covered_via_history_passes(tmp_path):
-    # a pre-embedded continuation (the normal MCP shape): the round embeds
-    # nothing new; the manifest is certified entirely through the FILES
-    # REFERENCED section of the audited prompt (F3)
+def test_manifest_covered_via_history_passes(tmp_path, monkeypatch):
+    # a continuation round (the real MCP shape is branch (c), history first):
+    # the round embeds nothing new; the manifest is certified entirely
+    # through the FILES REFERENCED section of the audited prompt (F3).
+    # STRICT=0: under STRICT, Fix 2 rejects continuation+files outright.
+    monkeypatch.setenv("PAL_GUARD_STRICT", "0")
     a_old = make_file(tmp_path, "a_old.py", "old")
     tid = _cm_create_thread(tool_name="chat")
     _cm_add_turn(tid, "user", "first question", files=[a_old])
     _cm_commit_files(tid)
-    history, _ = _cm_build_conversation_history(_cm_get_thread(tid), None)
-    embedded = (f"{history}\n\n=== CONVERSATION HISTORY ===\n"
-                f"=== NEW USER INPUT ===\nfollow-up")
     slug = "sess-ok"
     make_manifest(tmp_path, slug, [a_old])
     tool = new_tool()
-    args = {"prompt": f"[guard-session: {slug}]\n{embedded}",
+    args = {"prompt": f"[guard-session: {slug}]\nfollow-up",
             "continuation_id": tid,
             "absolute_file_paths": [a_old],  # re-requested, filtered by thread
             "working_directory_absolute_path": str(tmp_path)}
     asyncio.run(tool.execute(args))
     (entry,) = ledger_entries(tmp_path)
     assert entry["verdict"] == "ok"
+    assert entry["history_files"] == [a_old]
     assert entry["exclusions"]["missing_from_payload"] == []
     assert entry["exclusions"]["extra_in_payload"] == []
     assert len(tool.provider.calls) == 1
+
+
+# --- Fix 4: canonical paths in the loss formula -------------------------------
+
+def test_lost_formula_canonizes_alias_vs_realpath(tmp_path):
+    # H12 (observed live, first run 2026-10-03): the request carried
+    # /tmp/... and the fork embedded the realpath /private/tmp/... — the raw
+    # string difference must not produce a false positive loss
+    real = make_file(tmp_path, "real.py", "content\n")
+    alias_dir = tmp_path / "alias"
+    alias_dir.mkdir()
+    alias = str(alias_dir / "real.py")
+    os.symlink(real, alias)
+    ctx = guard._GuardCtx(run_id="canon-1",
+                          arguments={"absolute_file_paths": [alias]})
+    ctx.capture.processed = [os.path.realpath(real)]  # fork embedded realpath
+    extra = guard._compute_derived(ctx, "no history in this prompt", None)
+    assert extra["files_lost_to_dedup_bug"] == []
+    # a genuine loss is still detected, reported canonically
+    ctx2 = guard._GuardCtx(run_id="canon-2",
+                           arguments={"absolute_file_paths": [alias]})
+    extra2 = guard._compute_derived(ctx2, "", None)
+    assert extra2["files_lost_to_dedup_bug"] == [os.path.realpath(real)]
+
+
+# --- Fix 5: history parse anchored to the leading continuation marker ---------
+
+def test_history_parse_anchored_ignores_marker_in_embedded_content(tmp_path, monkeypatch):
+    # H13 (observed live, first run 2026-10-03): a FRESH round embedding a
+    # file whose content mentions the FILES REFERENCED marker (this very
+    # module does) produced 4 false history_files. The parse must be anchored
+    # to the START of the prompt.
+    monkeypatch.setenv("PAL_GUARD_STRICT", "0")  # files without slug
+    marker_mention = (
+        "=== FILES REFERENCED IN THIS CONVERSATION ===\n"
+        "--- BEGIN FILE: /fake/mentioned.py (Last modified: m) ---\nX\n"
+        "--- END FILE: /fake/mentioned.py ---\n"
+        "=== END REFERENCED FILES ===\n")
+    f1 = make_file(tmp_path, "mentions_marker.py", marker_mention)
+    tool = new_tool()
+    args = {"prompt": "review this file\n", "absolute_file_paths": [f1],
+            "working_directory_absolute_path": str(tmp_path)}
+    asyncio.run(tool.execute(args))
+    (entry,) = ledger_entries(tmp_path)
+    assert entry["history_files"] == []
+    assert entry["files_lost_to_dedup_bug"] == []
+    assert entry["verdict"] == "ok"
+
+
+def test_parse_history_files_requires_leading_continuation_marker(tmp_path):
+    f_old = make_file(tmp_path, "old.py", "old content")
+    tid = _cm_create_thread(tool_name="chat")
+    _cm_add_turn(tid, "user", "first question", files=[f_old])
+    _cm_commit_files(tid)
+    history, _ = _cm_build_conversation_history(_cm_get_thread(tid), None)
+    assert history.startswith(guard.CONVERSATION_HISTORY_MARKER)
+    # real continuation form (history first): parsed as before
+    assert guard._parse_history_files(history) == [f_old]
+    # same marker anywhere but the start: not a history section
+    assert guard._parse_history_files("preamble\n" + history) == []
+    assert guard._parse_history_files("") == []
 
 
 # --- 9) pins + heartbeat + DISABLED_TOOLS ------------------------------------

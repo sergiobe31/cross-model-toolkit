@@ -20,11 +20,13 @@ for --response-json FILE:
   1. FILE parses as JSON with ``content`` a LIST of {text}    -> join the
      ``text`` values with "\\n" (MCP-result wrapper serialization; a list of
      one element yields exactly that element's text, i.e. the ToolOutput JSON).
-  2. ANY OTHER shape — not JSON, a JSON list, a JSON dict with ``content`` a
-     plain string (a bare ToolOutput dump), a TextContent dict —              ->
-     use the raw file text verbatim. The canonical artifact for chat is the
-     whole file in these shapes; descending into a string ``content`` field
-     would hash the wrong string.
+  2. FILE parses as a JSON DICT with a string ``text`` field and no list
+     ``content`` (a serialized TextContent, ``{"type":"text","text":...}``)
+     -> the canonical string is ``data["text"]``.
+  3. ANY OTHER shape — not JSON, a JSON list, a JSON dict with ``content`` a
+     plain string (a bare ToolOutput dump), any other dict —               ->
+     use the raw file text verbatim. Descending into a string ``content``
+     field would hash the wrong string.
 
 Usage:
   pal_guard_verify.py --run-id ID --response-json FILE [--state DIR]
@@ -62,6 +64,11 @@ def extract_response_text(raw: str) -> str:
             else:
                 texts.append(str(item))
         return "\n".join(texts)
+    if isinstance(data, dict) and isinstance(data.get("text"), str):
+        # serialized TextContent ({"type": "text", "text": ...}): the
+        # canonical string is the text field itself (rule 2; a dict with a
+        # list ``content`` already returned under rule 1)
+        return data["text"]
     return raw
 
 

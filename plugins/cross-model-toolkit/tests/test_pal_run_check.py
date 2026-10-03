@@ -324,3 +324,42 @@ def test_guard_mode_precomputed_entries_no_reread(tmp_path):
     copy_path = e["prompt"]["copy_path"]
     assert open(copy_path, encoding="utf-8").read() == "ok to send\n"
     assert out_lines[0] == "[pal-pre-send] payload: 1 file(s) + composed prompt"
+
+
+# --- 5) coverage_fail_hard (guard mode): C13 in the ledger, CLI unchanged -----
+
+def test_coverage_fail_hard_turns_missing_from_payload_into_hard_fail(tmp_path):
+    state = tmp_path / "state"
+    sent = make_payload(tmp_path, name="sent.txt")
+    missing = tmp_path / "missing.txt"
+    missing.write_text("declared but never sent\n")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"files": [
+        {"path": str(sent), "sha256": hashlib.sha256(sent.read_bytes()).hexdigest()},
+        {"path": str(missing), "sha256": hashlib.sha256(missing.read_bytes()).hexdigest()},
+    ]}))
+    mod = load_module()
+    kw = dict(
+        payload_paths=[str(sent)],
+        prompt_content="fine\n",
+        ledger_mode=True, run_id="cov-hard", state=str(state),
+        plan_manifest=str(manifest),
+    )
+    code, entry, failures, _ = mod.run_check(coverage_fail_hard=True, **kw)
+    assert code == 1
+    assert entry["verdict"] == "hard_fail"
+    cov_failures = [f for f in failures if f[0] == "plan-manifest"
+                    and f[2] == "missing_from_payload"]
+    assert len(cov_failures) == 1
+    assert cov_failures[0][1] == os.path.realpath(missing)
+    # exclusions stays populated in both modes
+    assert entry["exclusions"]["missing_from_payload"] == [os.path.realpath(missing)]
+
+    # default (False): bit-identical behavior — informational, exit 0
+    shutil.rmtree(state)
+    code2, entry2, failures2, _ = mod.run_check(**kw)
+    assert code2 == 0
+    assert failures2 == []
+    assert entry2["verdict"] == "ok"
+    assert entry2["exclusions"]["missing_from_payload"] == [os.path.realpath(missing)]
+

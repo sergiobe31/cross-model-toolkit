@@ -107,7 +107,9 @@ Files carried via conversation history are certified through `prompt.sha256` (co
 effective prompt) and listed in `history_files`; the mcp-path coverage set is
 `processed ∪ history_files` and plan-manifest exclusions diff the manifest against that same
 union — a manifest-declared file that ends up in `missing_from_payload` (e.g. lost to the
-fork's dedup bug) is a **hard reject** under the guard. `declared_extra` stays ∅.
+fork's dedup bug) is a **hard reject** under the guard, and the ledger entry itself records
+`verdict:"hard_fail"` (the guard passes `coverage_fail_hard=True` so the block is visible in
+the ledger, not only in the sidecar). `declared_extra` stays ∅.
 
 **STRICT mode.** Default ON in code (`PAL_GUARD_STRICT=0` is the documented opt-out, labelled
 `strict:false` in the ledger). A call with `absolute_file_paths` must open line 1 of the prompt
@@ -115,12 +117,21 @@ with `[guard-session: <slug>]` (the marker anywhere else is ambiguous → reject
 `state/manifests/<slug>.json` must exist (create it in planning:
 `pal_plan_manifest.py --file <plan> --slug <slug>`, atomic tmp+rename). A call without files
 without slug passes, labelled `manifest:false`. Plan manifests are per-debate, not per-process
-(`manifests/<slug>.json`).
+(`manifests/<slug>.json`). Since 2026-10-03 STRICT additionally imposes mechanically the
+"round with files ⇒ fresh thread" convention: a call with `absolute_file_paths` AND a
+`continuation_id` is rejected up front (`continuation-with-files`) — in the real MCP path the
+server has already replaced `arguments["prompt"]` with the conversation history
+(server.py:775), so a first-line marker is unreachable and the failure would otherwise surface
+as the misleading "ambiguous marker". Under `PAL_GUARD_STRICT=0` the combination passes,
+audited.
 
 **Sidecar — `state/pal_guard_responses.jsonl`.** One record per run under the same flock as the
 send ledger: `phase` = `response_ok | guard_reject | pre_send_failed | post_send_failed`,
 `run_id`, `model`, `cause_type` (failure phases), `response_sha256` (response_ok),
-`continuation_id` (response_ok). Canonical hash: `sha256("\n".join(c.text for c in result))` —
+`continuation_id` (response_ok). `post_send_failed` means the httpx request hook fired OR the
+original provider was invoked (conservative fallback when the hook cannot be installed against
+the real SDK client — assume exposure); anything earlier is `pre_send_failed`. Canonical hash:
+`sha256("\n".join(c.text for c in result))` —
 for chat, one TextContent whose `.text` is the ToolOutput JSON, so the hash is over that full
 JSON string. Post-send sidecar failures are fail-open (stderr + `state/guard_errors.jsonl`; the
 response is never hidden). Verify a saved response against the sidecar with
@@ -157,8 +168,42 @@ thread must be kept, inline the files in the prompt with their sha256 (watch the
 to the original server has no mechanical defense (visibility = heartbeat + run_id in the
 deliberation); `challenge`/`consensus` are outside the guard; the channel-local claim holds only
 in CLI mode (the guard audits the effective prompt); server-side truncation inside the fork is
-not detectable by the guard (fork-side diff only); pre-guard history is re-injected without
-re-scanning (a guarded conversation must start on a fresh thread).
+not detectable by the guard (fork-side diff only).
+
+**Fase-4 corrections and notes (2026-10-03, from the first live run and the adversarial code
+review):**
+
+- **Prompt copies.** `state/prompts/` may hold copies of REJECTED prompts — a rejected prompt
+  typically contains the very secret that tripped the scan. They are local-disk artifacts of the
+  audit (never transmitted); delete them manually after review (no automatic retention policy).
+- **Token/cost estimate.** In guard mode `est_tokens`/`est_cost_usd` may count the embedded
+  blob twice (it is scanned standalone AND inside the effective prompt). These fields are an
+  estimate for budgeting, not an audit artifact — the audit hashes are the per-file and prompt
+  sha256.
+- **Pre-guard history scan (residual corrected).** The secret-scan DOES cover re-injected
+  conversation history — it travels inside the effective prompt that the guard audits and
+  hashes. What is NOT re-done per-file is the certification of history-carried files (they
+  arrive as embedded content, not as `payloads` entries; they are accounted via
+  `history_files` and the prompt sha256).
+- **Empty-response retry.** The fork retries on an empty assistant response (base.py:~501);
+  both attempts of one guarded run are ledgered as separate entries under the SAME run_id, all
+  of them audited.
+- **Fresh-thread enforcement.** Under STRICT, `absolute_file_paths` + `continuation_id` is a
+  dedicated reject (`continuation-with-files`) — see STRICT mode above; under `STRICT=0` it
+  passes, audited.
+- **`history_files` semantics.** The parse is anchored to the START of the effective prompt
+  (every real continuation prompt begins with `=== CONVERSATION HISTORY (CONTINUATION) ===`,
+  history first) — without the anchor, a fresh round embedding a file that mentions the
+  `FILES REFERENCED` marker produced false history_files in the first live run
+  (2026-10-03, run_id 20261003-172803-4jouol). The loss formula
+  (`files_lost_to_dedup_bug = requested − processed − budget-skipped − history`) canonizes
+  (realpath) all four sets before differencing — the fork may embed the realpath of a
+  requested `/tmp/...` path (same run) — and reports canonical paths.
+- **Response saving forms.** `pal_guard_verify.py` accepts three shapes for
+  `--response-json`: the MCP-result wrapper `{"content":[{"text":…}]}` (joins the texts with
+  `\n`; for chat this equals the ToolOutput JSON); a serialized TextContent dict
+  `{"type":"text","text":…}` (hashes the `text` field); any other shape (raw text, JSON list,
+  bare ToolOutput dump) verbatim.
 
 ## Graph grounding (optional, for mapped codebases)
 

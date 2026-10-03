@@ -25,16 +25,28 @@ for ``GuardedChatTool``. Architecture (plan v2, deliberation 2026-09-30):
   exclusions diff the manifest against that same union. A manifest-declared
   file that ends up in ``missing_from_payload`` (e.g. lost to the fork's
   dedup bug) is a hard reject — the claim "declared in the plan bundle" was
-  not honored.
+  not honored — and the ledger entry says ``verdict:"hard_fail"`` (the guard
+  passes ``coverage_fail_hard=True`` so the block is visible in the ledger,
+  not only in the sidecar). The loss formula canonizes (realpath) all four
+  sets before differencing; ``files_lost_to_dedup_bug`` reports canonical
+  paths.
 - STRICT mode (default ON in code; ``PAL_GUARD_STRICT=0`` is the documented
   opt-out): a call with ``absolute_file_paths`` must carry a
   ``[guard-session: <slug>]`` marker alone on the FIRST line of the prompt
   and the manifest ``state/manifests/<slug>.json`` must exist. The marker
-  anywhere else is ambiguous → reject.
+  anywhere else is ambiguous → reject. Under STRICT, a call with files AND a
+  ``continuation_id`` is rejected up front (mechanical enforcement of the
+  adjudicated "round with files ⇒ fresh thread" convention — the MCP server
+  prepends history to the prompt, so a first-line marker is unreachable);
+  under ``PAL_GUARD_STRICT=0`` it passes, audited.
 - Sidecar ``state/pal_guard_responses.jsonl`` records response_ok /
   guard_reject / pre_send_failed / post_send_failed per run under the same
-  flock as the send ledger. Post-send sidecar failures are fail-open: stderr
-  plus ``state/guard_errors.jsonl``; the response is never hidden.
+  flock as the send ledger. post_send_failed = the httpx request hook fired
+  OR the original provider was invoked (``original_called_var``, the
+  conservative fallback when the hook could not be installed against the
+  real SDK client — assume exposure); anything earlier is pre_send_failed.
+  Post-send sidecar failures are fail-open: stderr plus
+  ``state/guard_errors.jsonl``; the response is never hidden.
 - A request-scoped ContextVar (``guard_ctx``) carries the capture; the fork
   keeps per-request state on ``self`` (inherited bug) — the guard does not.
 - Pins (pal_guard_pins.py): the registry file and the fork modules the guard
@@ -89,10 +101,16 @@ logger = logging.getLogger("pal_guarded_server")
 # interleaved coroutines cannot cross streams.
 guard_ctx = contextvars.ContextVar("pal_guard_ctx", default=None)
 request_sent_var = contextvars.ContextVar("pal_guard_request_sent", default=False)
+# conservative fallback when the httpx hook could not be installed (the SDK
+# object has no event_hooks): set right BEFORE the original provider call, so
+# any failure after that point classifies as post_send_failed — deliberate
+# direction: assume exposure
+original_called_var = contextvars.ContextVar("pal_guard_original_called", default=False)
 
 SLUG_FIRST_LINE_RE = re.compile(r"^\[guard-session: ([A-Za-z0-9._-]+)\]$")
 GUARD_TAG = "[guard-session:"
 
+CONVERSATION_HISTORY_MARKER = "=== CONVERSATION HISTORY (CONTINUATION) ==="
 HISTORY_SECTION_START = "=== FILES REFERENCED IN THIS CONVERSATION ==="
 HISTORY_SECTION_END = "=== END REFERENCED FILES ==="
 SKIPPED_BUDGET_START = "--- SKIPPED FILES (TOKEN LIMIT) ---"
@@ -174,9 +192,18 @@ def _parse_skipped_thread(blob):
 
 def _parse_history_files(prompt):
     """Files embedded in the conversation-history section of the EFFECTIVE
-    prompt (same BEGIN FILE block format as the context-files blob)."""
-    if HISTORY_SECTION_START not in prompt:
+    prompt (same BEGIN FILE block format as the context-files blob).
+
+    Anchored to the START of the prompt: every real continuation prompt
+    begins with ``=== CONVERSATION HISTORY (CONTINUATION) ===`` (server.py
+    composes history first; conversation_memory.py:798). Without the anchor,
+    a fresh round whose embedded file CONTENT mentions the FILES REFERENCED
+    marker (pal_guarded_server.py itself does) produced false history_files
+    in the first live run (2026-10-03, run_id 20261003-172803-4jouol)."""
+    if not (prompt or "").startswith(CONVERSATION_HISTORY_MARKER):
         return []
+    if HISTORY_SECTION_START not in prompt:
+        return []  # history without any referenced files
     section = prompt.split(HISTORY_SECTION_START, 1)[1].split(HISTORY_SECTION_END, 1)[0]
     paths = []
     for line in section.splitlines():
@@ -226,16 +253,23 @@ def _build_scan_texts(ctx):
 def _compute_derived(ctx, prompt, system_prompt):
     ctx.system_prompt_sha256 = _sha256_text(system_prompt)
     ctx.history_files = _parse_history_files(prompt or "")
-    request_files = list(ctx.arguments.get("absolute_file_paths") or [])
-    processed = ctx.capture.processed
-    skipped_budget = ctx.capture.skipped_budget
+    # All four sets canonized (realpath) before the set difference: the fork
+    # may embed the realpath of a requested /tmp/... path (observed live,
+    # 2026-10-03) — canonizing both sides keeps the loss formula exact
+    # instead of reporting a false positive. files_lost_to_dedup_bug reports
+    # CANONICAL paths; the report fields below keep the RAW embedded order.
+    request_canon = {canon(p) for p in (ctx.arguments.get("absolute_file_paths") or [])}
+    processed_canon = {canon(p) for p in ctx.capture.processed}
+    skipped_budget_canon = {canon(p) for p in ctx.capture.skipped_budget}
+    history_canon = {canon(p) for p in ctx.history_files}
     skipped_thread = _parse_skipped_thread(ctx.capture.formatted or "")
     # F4 formula: requested but neither embedded this round, nor accounted
     # for by the budget skip, nor present in the history section — the fork
     # dedup bug (add_turn before filter + stale history) drops exactly these.
     ctx.lost_files = sorted(
-        set(request_files) - set(processed) - set(skipped_budget) - set(ctx.history_files)
-    )
+        request_canon - processed_canon - skipped_budget_canon - history_canon)
+    processed = ctx.capture.processed
+    skipped_budget = ctx.capture.skipped_budget
     extra_fields = {
         "guard": True,
         "strict": ctx.strict,
@@ -319,6 +353,7 @@ def install_generate_content_guard():
                 prompt_sha256=_sha256_text(prompt),
                 model=ctx.model,
                 plan_manifest=ctx.manifest_path,
+                coverage_fail_hard=True,
                 mcp_paths=sorted(set(ctx.capture.processed) | set(ctx.history_files)),
                 coverage_extra=ctx.history_files,
                 extra_entry_fields=extra_fields,
@@ -328,19 +363,11 @@ def install_generate_content_guard():
             # Fail-closed includes a >64KB guard entry: nothing is sent.
             raise GuardReject(f"ledger fail-closed: {exc}") from exc
         if exit_code != 0:
+            # includes the plan-manifest coverage hard-fail (C13): with
+            # coverage_fail_hard=True the missing_from_payload paths are
+            # already failures in the ledgered entry (verdict hard_fail)
             raise GuardReject("pre-send check HARD-FAIL", failures=failures)
-        if ctx.manifest_path and _entry.get("exclusions"):
-            # C13: the plan bundle declared files that never made it into the
-            # covered set (processed ∪ history) — e.g. dropped by the fork's
-            # dedup bug. Informational in CLI mode; a hard reject under the
-            # guard, where the manifest is a pre-committed contract.
-            missing = _entry["exclusions"].get("missing_from_payload") or []
-            if missing:
-                raise GuardReject(
-                    "plan manifest files missing from the audited coverage set",
-                    failures=[("plan-manifest", p, "missing_from_payload",
-                               "declared in the plan bundle but not sent nor in history")
-                              for p in missing])
+        original_called_var.set(True)
         return original(provider_self, *args, **kwargs)
 
     cls.generate_content = guarded_generate_content
@@ -398,11 +425,19 @@ def install_http_hook():
     def guarded_client(provider_self):
         client = original_fget(provider_self)
         if client is not None and not getattr(provider_self, "_pal_guard_http_hook_installed", False):
-            try:
-                client.event_hooks["request"].append(_http_request_hook)
-                provider_self._pal_guard_http_hook_installed = True
-            except (AttributeError, KeyError, TypeError) as exc:
-                logger.debug("http hook not installable on client: %s", exc)
+            # (a) stubs/tests expose event_hooks on the client itself;
+            # (b) the real SDK `OpenAI` object keeps the httpx.Client with
+            #     event_hooks under `._client` (openai_compatible.py:~312)
+            for target in (client, getattr(client, "_client", None)):
+                if target is None:
+                    continue
+                try:
+                    target.event_hooks["request"].append(_http_request_hook)
+                    provider_self._pal_guard_http_hook_installed = True
+                    break
+                except (AttributeError, KeyError, TypeError) as exc:
+                    logger.debug("http hook not installable on %r: %s",
+                                 type(target).__name__, exc)
         return client
 
     cls.client = property(guarded_client)
@@ -421,6 +456,7 @@ def build_guarded_chat_tool(ChatTool, ToolOutput, ToolExecutionError, TextConten
             ctx = _GuardCtx(run_id=run_id, arguments=dict(arguments))
             token = guard_ctx.set(ctx)
             request_sent_var.set(False)
+            original_called_var.set(False)
             try:
                 try:
                     self._guard_preflight(ctx)
@@ -430,7 +466,13 @@ def build_guarded_chat_tool(ChatTool, ToolOutput, ToolExecutionError, TextConten
                                                  "phase": "guard_reject"})
                     raise self._guard_reject_error(ctx, exc) from exc
                 except Exception as exc:
-                    phase = ("post_send_failed" if request_sent_var.get(False)
+                    # post_send = the httpx hook fired OR the original provider
+                    # was invoked (original_called_var, conservative fallback
+                    # for when the hook could not be installed); anything
+                    # earlier is pre_send
+                    phase = ("post_send_failed"
+                             if (request_sent_var.get(False)
+                                 or original_called_var.get(False))
                              else "pre_send_failed")
                     # the fork's catch-all wraps the original failure in a
                     # ToolExecutionError (`raise ... from e`) before the guard
@@ -449,6 +491,24 @@ def build_guarded_chat_tool(ChatTool, ToolOutput, ToolExecutionError, TextConten
             ctx.strict = os.environ.get("PAL_GUARD_STRICT", "1") != "0"
             prompt = ctx.arguments.get("prompt", "") or ""
             files = list(ctx.arguments.get("absolute_file_paths") or [])
+            if ctx.strict and files and ctx.arguments.get("continuation_id"):
+                # Mechanical enforcement of the adjudicated convention
+                # "round with files ⇒ fresh thread": in the real MCP path the
+                # continuation arrives with arguments["prompt"] ALREADY
+                # replaced by history (server.py:775), so a first-line
+                # [guard-session:] marker is unreachable and the reject would
+                # otherwise surface as the misleading "ambiguous marker".
+                detail = (
+                    "rounds with absolute_file_paths must run on a FRESH "
+                    "thread (no continuation_id): the PAL server prepends "
+                    "conversation history to the prompt, so a first-line "
+                    "[guard-session:] marker is unreachable. Drop "
+                    "continuation_id and retry; the manifest/slug contract "
+                    "is unchanged."
+                )
+                raise GuardReject(detail, failures=[
+                    ("continuation", "arguments", "continuation-with-files",
+                     detail)])
             first_line = prompt.split("\n", 1)[0]
             slug = None
             m = SLUG_FIRST_LINE_RE.match(first_line)
@@ -482,9 +542,10 @@ def build_guarded_chat_tool(ChatTool, ToolOutput, ToolExecutionError, TextConten
             remediation = (
                 f"PAL guard rejected this send (run_id={ctx.run_id}): {exc.message}\n"
                 "Nothing was transmitted. Fix the finding (secret, blacklist, "
-                "budget, manifest/slug or coverage) and retry; every attempt "
-                "is recorded in state/pal_send_ledger.jsonl and "
-                "state/pal_guard_responses.jsonl."
+                "budget, manifest/slug, coverage or thread rule) and retry; "
+                "every attempt is recorded in "
+                "state/pal_guard_responses.jsonl (and in "
+                "state/pal_send_ledger.jsonl when the send reached the audit)."
             )
             output = ToolOutput(
                 status="error",
