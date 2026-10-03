@@ -336,7 +336,7 @@
     <div class="golden">
       <span class="glabel">The discipline</span>
       <h2>Nothing the second model says is trusted until it's verified against ground truth.</h2>
-      <p>Its output is a <strong>proposal, not truth</strong>. Claude checks it claim-by-claim against <code>file:line</code> / source / trace and tags each one. Verification cuts both ways: it catches a real bug <strong>and</strong> it clears a false alarm. That's what turns a second model from a liability into an asset. The gate now runs in both directions: a <strong>pre-send guard</strong> scans the exact bytes leaving the machine (payload files + composed prompt) against a filename blacklist and secret regexes — hard-fail, nothing is sent — and adjudication checks everything that comes back.</p>
+      <p>Its output is a <strong>proposal, not truth</strong>. Claude checks it claim-by-claim against <code>file:line</code> / source / trace and tags each one. Verification cuts both ways: it catches a real bug <strong>and</strong> it clears a false alarm. That's what turns a second model from a liability into an asset. The gate runs in both directions: a <strong>guarded PAL server</strong> audits the exact prompt in the last mile — in-process, at the single provider funnel every code path traverses — against secret regexes, a filename blacklist and a per-task plan-bundle manifest (declared files must actually arrive). Anything suspicious fails closed: nothing is sent, and the block itself is ledgered as <code>hard_fail</code>. Adjudication checks everything that comes back, and every response is hash-pinned so the archived transcript is provably what the model said.</p>
       <div class="tags">
         <span class="gtag">REAL</span>
         <span class="gtag">SMELL</span>
@@ -372,7 +372,9 @@
       <div class="tgroup">
         <span class="glabel2">Guard</span>
         <div class="row">
-          <span class="badge c">pre-send check — secrets + budget · exit 1 = abort</span>
+          <span class="badge c">guarded PAL server — last-mile audit, fail-closed</span>
+          <span class="badge c">plan-bundle manifests + per-file SHA-256 ledger</span>
+          <span class="badge c">response sidecar + verify — hash-checked transcripts</span>
         </div>
       </div>
       <div class="tgroup">
@@ -507,6 +509,20 @@
         </div>
       </div>
 
+      <div class="case live">
+        <div class="idx">8</div>
+        <div class="body">
+          <h3>The guard catches itself on its first live run</h3>
+          <div class="meta">Live · cross-vendor adversarial review, end to end · Oct 2026</div>
+          <p>The guarded server was built under its own discipline: the plan survived a double adversarial review (22 findings, all real), then a code review — GLM-5.3 auditing a Moonshot coder — returned 11 more, from a dead HTTP hook to a blocked send ledgered as "ok". And on the guard's very first live run, its own ledger entry exposed two bugs no static review had seen: a <code>/tmp</code> canonicalization false positive and a marker-string collision with the payload's own content. All 13 fixed, each re-verified resolved by the same reviewer, shipped with an 84-test suite and a byte-exact integration golden against the real PAL fork — with both review transcripts hash-verified against the send sidecar.</p>
+          <div class="outcome">
+            <span class="chip">22 + 13 findings, all real</span>
+            <span class="chip">self-detected in production</span>
+            <span class="chip">hash-verified transcripts</span>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -532,7 +548,7 @@
         <p>Fork the repo and drop a <code>SKILL.md</code> next to <code>/interceptor</code> and <code>/debate</code>. Same plugin, your own choreography of the loop.</p>
       </div>
     </div>
-    <div class="xnote">Update: GLM-5.2 now ships at its full <strong>1M-token context</strong> and with <strong>OpenRouter reasoning</strong> on by default (xhigh, dialable per call) — both wired in and verified live against the running server (see the real cases above). Reasoning rides a minimal, SHA-pinned fork of PAL; every non-flagged model stays byte-identical to upstream. Sep 2026: a <strong>pre-send secrets guard</strong> hard-fails before any payload leaves the machine, <code>/debate</code> ends in a <strong>three-valued verdict</strong> (GO / conditional / NO-GO, with residual disagreements escalated to the human instead of papered over), and <strong>7 models</strong> are reasoning-flagged.</div>
+    <div class="xnote">Update: GLM-5.2 now ships at its full <strong>1M-token context</strong> and with <strong>OpenRouter reasoning</strong> on by default (xhigh, dialable per call) — both wired in and verified live against the running server (see the real cases above). Reasoning rides a minimal, SHA-pinned fork of PAL; every non-flagged model stays byte-identical to upstream. Sep 2026: a <strong>pre-send secrets guard</strong> hard-fails before any payload leaves the machine, <code>/debate</code> ends in a <strong>three-valued verdict</strong> (GO / conditional / NO-GO, with residual disagreements escalated to the human instead of papered over), and <strong>7 models</strong> are reasoning-flagged. Oct 2026: the guard went <strong>in-process</strong> — a guarded PAL server audits the effective prompt at the provider funnel (fail-closed), enforces per-task plan-bundle manifests (STRICT; rounds with files must run on fresh threads, mechanically), and ledgers every send and every response with verifiable SHA-256 hashes.</div>
   </div>
 </section>
 
