@@ -90,6 +90,22 @@ round:
 — keep its `aggregate` line with the plan. In ad-hoc debates outside the Guardrail, `--ledger`
 is opt-in. Full contract: `references/pal-call-conventions.md`.
 
+**Guard server deployments (iteration 2, 2026-09-30 — projects whose `.mcp.json` points to
+`pal_guarded_server.sh`, e.g. rule_extraction):** the invocation is the STANDARD
+`mcp__pal__chat` — the guard audits in-process, no CLI pre-send step. Two obligations replace
+the CLI flags: (1) the prompt must open with `[guard-session: <slug>]` ALONE on its FIRST line
+(slug = debate/plan name; create the manifest in planning with
+`pal_plan_manifest.py --file <plan.md> --slug <slug>`); (2) the MANDATORY rule **"round with
+files ⇒ fresh thread"** — never pass `absolute_file_paths` on a `continuation_id` round (fork
+bug: duplicated turn + nested history, and file loss occurred with larger payloads; inline the
+files in the prompt with sha256 if the thread must be kept, watching the 60k prompt limit).
+The guard hard-rejects a files-call without slug/manifest, ledgerizes `guard:true` with
+`payloads`=delta + `history_files`, records the response hash in
+`state/pal_guard_responses.jsonl`, and `pal_guard_verify.py --run-id <id> --response-json <raw>`
+closes the deliberation↔sidecar loop — record the run_id in the deliberation header. Keep the
+CLI contract (`--ledger --plan-manifest --mcp-path`) for deployments WITHOUT the guard
+(fallback). Full contract: `references/pal-call-conventions.md` (section "Guard server").
+
 Hand your position + the context to the second model via the standard call (see
 `references/pal-call-conventions.md`), framed to **attack**: find missing constraints, errors,
 omissions, failure modes; steelman the opposite; flag what it lacks context on. Apply the canonical

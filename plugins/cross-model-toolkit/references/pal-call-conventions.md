@@ -84,6 +84,82 @@ findings: blacklist / secret / budget / mcp-path / plan-manifest).
 it cannot see what the actual MCP call carries — structural binding (a wrapper that injects the
 flags) is iteration 2.
 
+*Note (2026-09-30): in deployments where the guard server is active (`.mcp.json` →
+`mcp/pal_guarded_server.sh`), CLI ledger entries coexist with the guard's `guard:true` entries
+— same schema plus declared extra fields. See "Guard server" below.*
+
+## Guard server (iteration 2, 2026-09-30)
+
+The PAL MCP server can run **guarded**: `pal_guarded_server.py` (plugin `scripts/`) imports the
+SHA-pinned PAL fork in-process, swaps `TOOLS["chat"]` for `GuardedChatTool`, and audits the
+**effective prompt** — the exact kwargs about to enter `provider.generate_content`, the only
+funnel every branch of `SimpleTool.execute` traverses — BEFORE anything is transmitted. Deployed
+in this repo via `mcp/pal_guarded_server.sh` (mirror of `pal_server.sh` + `PAL_GUARD_STRICT=1`);
+`.mcp.json` points to it. `pal_server.sh` remains as the documented fallback (visible bypass).
+
+**Ledger (guard mode).** Same schema as the CLI plus declared extra fields: `guard: true`,
+`strict`, `manifest` (bool), `history_files`, `processed_files_delta`, `files_skipped_by_thread`,
+`files_skipped_by_budget`, `files_lost_to_dedup_bug`, `system_prompt_sha256`. Guard semantics
+(CLI stays bit-identical): `payloads` is the **per-round delta actually embedded** — per-file
+sha256 parsed from the `--- BEGIN/END FILE ---` blob (bytes as embedded; declared fallback:
+re-read from disk, labelled `sha256_source: disk_reread`, if the blob parse missed a file).
+Files carried via conversation history are certified through `prompt.sha256` (computed on the
+effective prompt) and listed in `history_files`; the mcp-path coverage set is
+`processed ∪ history_files` and plan-manifest exclusions diff the manifest against that same
+union — a manifest-declared file that ends up in `missing_from_payload` (e.g. lost to the
+fork's dedup bug) is a **hard reject** under the guard. `declared_extra` stays ∅.
+
+**STRICT mode.** Default ON in code (`PAL_GUARD_STRICT=0` is the documented opt-out, labelled
+`strict:false` in the ledger). A call with `absolute_file_paths` must open line 1 of the prompt
+with `[guard-session: <slug>]` (the marker anywhere else is ambiguous → reject) and
+`state/manifests/<slug>.json` must exist (create it in planning:
+`pal_plan_manifest.py --file <plan> --slug <slug>`, atomic tmp+rename). A call without files
+without slug passes, labelled `manifest:false`. Plan manifests are per-debate, not per-process
+(`manifests/<slug>.json`).
+
+**Sidecar — `state/pal_guard_responses.jsonl`.** One record per run under the same flock as the
+send ledger: `phase` = `response_ok | guard_reject | pre_send_failed | post_send_failed`,
+`run_id`, `model`, `cause_type` (failure phases), `response_sha256` (response_ok),
+`continuation_id` (response_ok). Canonical hash: `sha256("\n".join(c.text for c in result))` —
+for chat, one TextContent whose `.text` is the ToolOutput JSON, so the hash is over that full
+JSON string. Post-send sidecar failures are fail-open (stderr + `state/guard_errors.jsonl`; the
+response is never hidden). Verify a saved response against the sidecar with
+`pal_guard_verify.py --run-id <id> --response-json <file> [--state <dir>]`: exit 0 only when the
+recomputed hash matches the `response_ok` record.
+
+**Pins + heartbeat.** `pal_guard_pins.py --update` signs `state/guard_pins.json` (registry
+sha256, locale/default model/disabled tools/turn limits, `fork_commit`, and
+`fork_modules_sha256` — a digest over the fork modules the guard relies on, so code drift of the
+checkout is also caught). Startup recomputes and **aborts on any mismatch**; `DISABLED_TOOLS`
+containing `chat` refuses to start; a heartbeat (pid, pins sha, guard version) appends to
+`state/guard_sessions.jsonl`. First run after deploying: `python scripts/pal_guard_pins.py
+--update`.
+
+**Mandatory convention — "round with files ⇒ fresh thread".** The pinned fork has a
+continuation bug: `get_thread` returns a deserialized copy (conversation_memory.py:301), the
+server adds the current turn BEFORE building history from the stale snapshot
+(server.py:1088 vs 1209), and the tool's branch check (`base.py:335`, substring
+`=== CONVERSATION HISTORY ===`) never matches the real marker
+(`=== CONVERSATION HISTORY (CONTINUATION) ===`), so the in-tool reconstruction branch fires and
+`add_turn` runs twice (base.py:353 on top of server.py:1088) — the enriched prompt is recorded
+as a user turn and the history ends up nested. The integration golden
+(`tests/test_pal_guard_integration.py`, opt-in `PAL_GUARD_INTEGRATION=1` under the pinned uv
+env) fixed the empirical behavior: the new file's contents DO reach the model via disk re-read
+in the in-tool history section, but the duplicated turn and nested history are real corruption,
+and the incident that exposed the bug (2026-09-30) involved larger payloads where loss did
+occur. Upstream fix is backlog (one-line: fresh `get_thread` at server.py:1209, or move
+`add_turn` after `build_conversation_history`); the pin stays intact by Sergio's decision
+2026-09-30. Until then: any PAL round that attaches files MUST run on a fresh thread; if the
+thread must be kept, inline the files in the prompt with their sha256 (watch the 60,000-char
+`MCP_PROMPT_SIZE_LIMIT`).
+
+**Residual (declared 2026-09-30, same redaction as project AGENTS.md):** bypassing `.mcp.json`
+to the original server has no mechanical defense (visibility = heartbeat + run_id in the
+deliberation); `challenge`/`consensus` are outside the guard; the channel-local claim holds only
+in CLI mode (the guard audits the effective prompt); server-side truncation inside the fork is
+not detectable by the guard (fork-side diff only); pre-guard history is re-injected without
+re-scanning (a guarded conversation must start on a fresh thread).
+
 ## Graph grounding (optional, for mapped codebases)
 
 When the question is structural and cross-module ("how does X flow into Y?", "is this design

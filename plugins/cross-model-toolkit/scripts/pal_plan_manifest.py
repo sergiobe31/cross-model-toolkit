@@ -11,10 +11,14 @@ invariant to the order of the --file arguments. Two distinct paths that
 canonize to the same realpath are a usage error.
 
 Usage:
-  pal_plan_manifest.py --file PATH [--file PATH ...] --out PATH
+  pal_plan_manifest.py --file PATH [--file PATH ...] --out PATH [--slug SLUG]
+
+``--slug SLUG`` additionally writes the manifest ATOMICALLY (tmp + rename) to
+``state/manifests/<slug>.json`` — the location the guarded PAL server looks
+up for STRICT plan-bundle enforcement (one manifest per debate/plan).
 
 Exit codes: 0 = OK, 2 = usage/config error (missing --file, unreadable
-file, unwritable --out, duplicate canonical path).
+file, unwritable --out, duplicate canonical path, invalid slug).
 """
 
 import argparse
@@ -22,7 +26,29 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sys
+
+SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _state_dir():
+    override = os.environ.get("PAL_STATE_DIR")
+    if override:
+        return override
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "state")
+
+
+def write_manifest_atomic(manifest: dict, dest_dir: str, slug: str) -> str:
+    """Write state/manifests/<slug>.json atomically (tmp + os.replace)."""
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, slug + ".json")
+    tmp = dest + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, dest)
+    return dest
 
 
 def sha256_file(path: str) -> str:
@@ -33,18 +59,27 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--file", action="append", default=[],
                     help="plan file to hash (repeatable, at least one)")
     ap.add_argument("--out", help="output path for the manifest JSON")
-    args = ap.parse_args()
+    ap.add_argument("--slug",
+                    help="also write the manifest atomically to "
+                         "state/manifests/<slug>.json (STRICT guard lookup)")
+    args = ap.parse_args(argv)
 
     if not args.file:
         print("[pal-plan-manifest] nothing to hash (pass --file)", file=sys.stderr)
         return 2
     if not args.out:
         print("[pal-plan-manifest] --out is required", file=sys.stderr)
+        return 2
+    if args.slug is not None and (not SLUG_RE.match(args.slug)
+                                  or args.slug in (".", "..")):
+        print(f"[pal-plan-manifest] invalid slug: {args.slug!r} "
+              "(must match ^[A-Za-z0-9._-]+$; path traversal rejected)",
+              file=sys.stderr)
         return 2
 
     entries = []  # (canonical_path, given_path, hex_digest)
@@ -77,6 +112,11 @@ def main():
         return 2
 
     print(f"[pal-plan-manifest] aggregate: {aggregate} ({len(entries)} file(s))")
+    if args.slug:
+        dest = write_manifest_atomic(manifest,
+                                     os.path.join(_state_dir(), "manifests"),
+                                     args.slug)
+        print(f"[pal-plan-manifest] slug {args.slug} -> {dest}")
     return 0
 
 

@@ -99,7 +99,12 @@ in. Otherwise state your assumptions in the diagnosis.
   a temp file and run
   `python3 <plugin-root>/scripts/pal_pre_send_check.py --payload <files...> --prompt-file <prompt.txt> --model <slug>`
   (exit 1 = abort pre-send; the check also has a ledger mode — full contract in
-  `references/pal-call-conventions.md`). Then hand the assembled
+  `references/pal-call-conventions.md`). In projects whose PAL server is the **guard**
+  (`.mcp.json` → `pal_guarded_server.sh`, e.g. rule_extraction) the invocation is the standard
+  `mcp__pal__chat` — no CLI step; instead open the prompt with `[guard-session: <slug>]` on the
+  first line and NEVER attach files on a continuation round (mandatory "round with files ⇒
+  fresh thread" — see the "Guard server" section of `references/pal-call-conventions.md`).
+  Then hand the assembled
   context + idea + rubric to the second model via the standard call (see
   `references/pal-call-conventions.md`: `mcp__pal__chat`, session model or default `z-ai/glm-5.2`,
   `thinking_mode: high`, files via `absolute_file_paths`) to either **(a) draft** the prompt or
