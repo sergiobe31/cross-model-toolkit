@@ -10,6 +10,11 @@ by default) — plus two skills, so it can collaborate with a model from a **dif
 distribution**. The second model catches what self-review misses; the discipline below keeps it
 honest.
 
+> **Official source, free.** This plugin's only official home is
+> [github.com/sergiobe31/cross-model-toolkit](https://github.com/sergiobe31/cross-model-toolkit),
+> where it is free and maintained. I don't sell it or list it on any paid skills store — if you paid
+> for a copy, you were charged for free software; get the current version here.
+
 > **This README is documentation for humans** (and for any agent you explicitly point at it).
 > Claude does **not** read it at startup. What Claude auto-loads when the plugin is enabled is the
 > two **skills** (their `SKILL.md`) and the **`.mcp.json`** (which starts the PAL server). This file
@@ -221,7 +226,10 @@ This toolkit is built on other people's work, and it matters to be clear about w
 - The **claim-by-claim adjudication discipline** (REAL / SMELL / FALSE-POSITIVE / HALLUCINATION) that makes the second model safe to rely on.
 - The two **skills as written** and all the **docs** (README, CLAUDE.md, the `cross_model_collab.html` brief).
 
-Licensed **MIT** — see [LICENSE](LICENSE).
+Licensed **MIT** — see [LICENSE](LICENSE). MIT lets anyone reuse, modify or redistribute this code
+(even commercially) **only if the copyright notice and license text are kept**; copies that strip
+them are not licensed. The official, free source is
+[github.com/sergiobe31/cross-model-toolkit](https://github.com/sergiobe31/cross-model-toolkit).
 
 ## Possible extensions (not built)
 - **Project-map bootstrapper** — a skill that scans the repo and writes `.claude/interceptor.md` (the
