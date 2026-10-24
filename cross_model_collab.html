@@ -259,6 +259,7 @@
   }
   footer .sep{margin:0 10px;color:var(--line)}
   footer .built{display:block;margin-top:10px;font-size:.82rem;color:#8A95A3}
+  footer a{color:inherit}
   /* RESPONSIVE */
   @media (max-width:760px){
     .flows{grid-template-columns:1fr}
@@ -336,7 +337,7 @@
     <div class="golden">
       <span class="glabel">The discipline</span>
       <h2>Nothing the second model says is trusted until it's verified against ground truth.</h2>
-      <p>Its output is a <strong>proposal, not truth</strong>. Claude checks it claim-by-claim against <code>file:line</code> / source / trace and tags each one. Verification cuts both ways: it catches a real bug <strong>and</strong> it clears a false alarm. That's what turns a second model from a liability into an asset. The gate runs in both directions: a <strong>guarded PAL server</strong> audits the exact prompt in the last mile — in-process, at the single provider funnel every code path traverses — against secret regexes, a filename blacklist and a per-task plan-bundle manifest (declared files must actually arrive). Anything suspicious fails closed: nothing is sent, and the block itself is ledgered as <code>hard_fail</code>. Adjudication checks everything that comes back, and every response is hash-pinned so the archived transcript is provably what the model said.</p>
+      <p>Its output is a <strong>proposal, not truth</strong>. Claude checks it claim-by-claim against <code>file:line</code> / source / trace and tags each one. Verification cuts both ways: it catches a real bug <strong>and</strong> it clears a false alarm. That's what turns a second model from a liability into an asset. The gate runs in both directions. Outbound, both skills run a <strong>pre-send check</strong> — secret regexes and a filename blacklist — that hard-fails before anything leaves the machine; opt in to the <strong>guarded PAL server</strong> and that audit moves into the last mile — in-process, on the exact prompt, at the single provider funnel every code path traverses — plus a per-task plan-bundle manifest (declared files must actually arrive). Anything suspicious fails closed: nothing is sent, and with the ledger on the block itself is recorded as <code>hard_fail</code>. Inbound, adjudication checks everything that comes back, and under the guard every response is hash-pinned so the archived transcript is provably what the model said.</p>
       <div class="tags">
         <span class="gtag">REAL</span>
         <span class="gtag">SMELL</span>
@@ -372,7 +373,8 @@
       <div class="tgroup">
         <span class="glabel2">Guard</span>
         <div class="row">
-          <span class="badge c">guarded PAL server — last-mile audit, fail-closed</span>
+          <span class="badge c">pre-send check — secrets + cost estimate, hard-fail (both skills)</span>
+          <span class="badge c">guarded PAL server (opt-in) — last-mile audit, fail-closed</span>
           <span class="badge c">plan-bundle manifests + per-file SHA-256 ledger</span>
           <span class="badge c">response sidecar + verify — hash-checked transcripts</span>
         </div>
@@ -398,7 +400,7 @@
           <span class="badge g">listmodels</span><span class="badge g">apilookup</span><span class="badge g">version</span>
         </div>
       </div>
-      <div class="foot"><strong>Any OpenRouter model</strong> works — GLM-5.2 is just the default. Name the model you want per call.</div>
+      <div class="foot"><strong>Any OpenRouter model</strong> works — GLM-5.2 is just the default. Name the model you want per call; <strong>12 curated models</strong> ship at their real context window with reasoning on.</div>
     </div>
   </div>
 </section>
@@ -548,7 +550,7 @@
         <p>Fork the repo and drop a <code>SKILL.md</code> next to <code>/interceptor</code> and <code>/debate</code>. Same plugin, your own choreography of the loop.</p>
       </div>
     </div>
-    <div class="xnote">Update: GLM-5.2 now ships at its full <strong>1M-token context</strong> and with <strong>OpenRouter reasoning</strong> on by default (xhigh, dialable per call) — both wired in and verified live against the running server (see the real cases above). Reasoning rides a minimal, SHA-pinned fork of PAL; every non-flagged model stays byte-identical to upstream. Sep 2026: a <strong>pre-send secrets guard</strong> hard-fails before any payload leaves the machine, <code>/debate</code> ends in a <strong>three-valued verdict</strong> (GO / conditional / NO-GO, with residual disagreements escalated to the human instead of papered over), and <strong>7 models</strong> are reasoning-flagged. Oct 2026: the guard went <strong>in-process</strong> — a guarded PAL server audits the effective prompt at the provider funnel (fail-closed), enforces per-task plan-bundle manifests (STRICT; rounds with files must run on fresh threads, mechanically), and ledgers every send and every response with verifiable SHA-256 hashes.</div>
+    <div class="xnote">Update: GLM-5.2 now ships at its full <strong>1M-token context</strong> and with <strong>OpenRouter reasoning</strong> on by default (xhigh, dialable per call) — both wired in and verified live against the running server (see the real cases above). Reasoning rides a minimal, SHA-pinned fork of PAL; every non-flagged model stays byte-identical to upstream. Sep 2026: a <strong>pre-send secrets guard</strong> hard-fails before any payload leaves the machine, <code>/debate</code> ends in a <strong>three-valued verdict</strong> (GO / conditional / NO-GO, with residual disagreements escalated to the human instead of papered over). Oct 2026: the guard went <strong>in-process</strong> — an opt-in guarded PAL server audits the effective prompt at the provider funnel (fail-closed), enforces per-task plan-bundle manifests (STRICT; rounds with files must run on fresh threads, mechanically), and ledgers every send and every response with verifiable SHA-256 hashes. v1.5.0 also grows the curated registry to <strong>12 models</strong>, all reasoning-flagged — Xiaomi MiMo v2.6 Flash, Qwen 3.8 Flash, GLM-5.3 Flash and a dated DeepSeek V4.1 Flash snapshot are the newest.</div>
   </div>
 </section>
 
@@ -560,6 +562,7 @@
     <span class="sep">·</span>
     always verify against file:line
     <span class="built">Built by its author, road-tested on real projects.</span>
+    <span class="built">Official, free source: <a href="https://github.com/sergiobe31/cross-model-toolkit">github.com/sergiobe31/cross-model-toolkit</a> · MIT</span>
   </div>
 </footer>
 
