@@ -2,13 +2,13 @@
   "_README": {
     "purpose": "SUPERSET OpenRouter registry wired by default via OPENROUTER_MODELS_CONFIG_PATH in .mcp.json. PAL loads exactly ONE registry file and REPLACES its bundled one (providers/registries/base.py:42-44), so this file must contain BOTH PAL's bundled models AND our curated entries — otherwise the other models would lose their correct context windows.",
     "generated_by": "GENERATED FILE — do not edit by hand. Built by scripts/build_registry.py; edit config/pal_registry_overlay.json instead and re-run the script.",
-    "provenance": "Base = conf/openrouter_models.json of sergiobe31/pal-mcp-server @ e4ffd3609b56882510ccdca27883eea15d85b68a (the SHA pinned in .mcp.json, branch openrouter-reasoning), fetched at build time. Overlay = config/pal_registry_overlay.json: 8 curated model entries + field overrides on 11 base models.",
+    "provenance": "Base = conf/openrouter_models.json of sergiobe31/pal-mcp-server @ e4ffd3609b56882510ccdca27883eea15d85b68a (the SHA pinned in .mcp.json, branch openrouter-reasoning), fetched at build time. Overlay = config/pal_registry_overlay.json: 12 curated model entries + field overrides on 11 base models.",
     "why_glm": "The plugin's headline feature is GLM-5.2 at its full 1,048,576-token window. Without this file GLM falls back to PAL's generic ~32K (providers/openrouter.py:_lookup_capabilities), capping per-call file budget to ~3.5K tokens. With 1M declared here, per-call file budget becomes ~268K (window x0.8 content x0.4 files x0.8 guard; utils/model_context.py + utils/file_utils.py:843-850).",
-    "reasoning_policy": "8 models have supports_extended_thinking:true — deepseek/deepseek-v4-pro, deepseek/deepseek-v4.1-flash, minimax/minimax-m3, moonshotai/kimi-k3, openai/gpt-5.6-sol-pro, tencent/hy3, z-ai/glm-5.2, z-ai/glm-5.3 — so by default those 8 get OpenRouter reasoning (the fork maps PAL thinking_mode -> reasoning effort; max -> xhigh). The overlay also forces supports_extended_thinking:false on 11 base models that upstream ships with the flag true (upstream default; our fork's reasoning for those models is unverified), keeping the shipped reasoning default limited to the verified entries. Flip flags in the overlay, not here.",
+    "reasoning_policy": "12 models have supports_extended_thinking:true — deepseek/deepseek-v4-pro, deepseek/deepseek-v4.1-flash, deepseek/deepseek-v4.1-flash-1017, minimax/minimax-m3, moonshotai/kimi-k3, openai/gpt-5.6-sol-pro, qwen/qwen3.8-flash, tencent/hy3, xiaomi/mimo-v2.6-flash, z-ai/glm-5.2, z-ai/glm-5.3, z-ai/glm-5.3-flash — so by default those 12 get OpenRouter reasoning (the fork maps PAL thinking_mode -> reasoning effort; max -> xhigh). The overlay also forces supports_extended_thinking:false on 11 base models that upstream ships with the flag true (upstream default; our fork's reasoning for those models is unverified), keeping the shipped reasoning default limited to the verified entries. Flip flags in the overlay, not here.",
     "resync_instructions": "After bumping the PAL SHA in .mcp.json or editing config/pal_registry_overlay.json, run: python3 scripts/build_registry.py. Use --check in CI to fail if the committed registry differs from a fresh build.",
     "glm_entry_verified": "z-ai/glm-5.2 confirmed on OpenRouter /api/v1/models: single slug, context_length 1,048,576, no separate [1m] variant. Verified 2026-06-30.",
-    "base_model_count": 35,
-    "overlay_model_count": 8,
+    "base_model_count": 39,
+    "overlay_model_count": 12,
     "overlay_override_count": 11
   },
   "models": [
@@ -602,6 +602,78 @@
       "max_image_size_mb": 20.0,
       "allow_code_generation": true,
       "description": "DeepSeek V4.1 Flash - fast tier of the DeepSeek V4 family via OpenRouter. 1M context, 384K output, multimodal (text+image->text), reasoning with granular effort. context_length=1048576, max_completion_tokens=384000, full supported_parameters (reasoning, reasoning_effort, include_reasoning, structured_outputs, tools, tool_choice, response_format, seed, logprobs, ...) verified against OpenRouter /api/v1/models on 2026-09-17. Pricing $0.30/M in, $1.20/M out. UNTESTED with the plugin at add time (added as a possibility on request; first use = gap review of the alfred-adoption deliberation).",
+      "intelligence_score": 15
+    },
+    {
+      "model_name": "xiaomi/mimo-v2.6-flash",
+      "aliases": [
+        "mimo",
+        "mimo-flash",
+        "mimo-v2.6-flash"
+      ],
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "supports_extended_thinking": true,
+      "supports_json_mode": true,
+      "supports_function_calling": true,
+      "supports_images": true,
+      "max_image_size_mb": 20.0,
+      "allow_code_generation": true,
+      "description": "Xiaomi MiMo v2.6 Flash via OpenRouter — 1M-token context (context_length=1048576), 131072 max_completion_tokens, multimodal (text+image+audio+video->text → supports_images=true), reasoning with effort control ('reasoning' + 'include_reasoning' present; reasoning_effort absent → granular effort NOT available), all capability flags ON (structured_outputs → json_mode; tools + tool_choice → function_calling). Verified against OpenRouter /api/v1/models on 2026-09-24. Pricing $0.14/M in, $0.28/M out (cheapest of the curated set). UNTESTED with the plugin at add time (first use = adversarial debate of the oro-regimen-cruce design).",
+      "intelligence_score": 15
+    },
+    {
+      "model_name": "qwen/qwen3.8-flash",
+      "aliases": [
+        "qwen",
+        "qwen-flash",
+        "qwen3.8-flash"
+      ],
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "supports_extended_thinking": true,
+      "supports_json_mode": true,
+      "supports_function_calling": true,
+      "supports_images": true,
+      "max_image_size_mb": 20.0,
+      "allow_code_generation": true,
+      "description": "Alibaba Qwen3.8 Flash via OpenRouter — 1M-token context (context_length=1000000), 131072 max_completion_tokens, multimodal (text+image+video->text → supports_images=true), reasoning ('reasoning' + 'include_reasoning' present; reasoning_effort ABSENT → no granular effort), all capability flags ON (structured_outputs → json_mode; tools + tool_choice → function_calling). Verified against OpenRouter /api/v1/models on 2026-10-08. Pricing $0.15/M in, $0.47/M out. UNTESTED with the plugin at add time (first use planned = adversarial debate). Sits before z-ai/glm-5.3 per convention.",
+      "intelligence_score": 15
+    },
+    {
+      "model_name": "z-ai/glm-5.3-flash",
+      "aliases": [
+        "glm-5.3-flash",
+        "glm53flash",
+        "glm-flash"
+      ],
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "supports_extended_thinking": true,
+      "supports_json_mode": true,
+      "supports_function_calling": true,
+      "supports_images": true,
+      "max_image_size_mb": 20.0,
+      "allow_code_generation": true,
+      "description": "Z.ai GLM-5.3 Flash via OpenRouter — high-speed variant of GLM-5.3, native multimodal (text+image+video->text → supports_images=true), 1M-token context (context_length=1048576), reasoning with granular effort ('reasoning' + 'reasoning_effort' + 'include_reasoning' present), all capability flags ON (structured_outputs → json_mode; tools + tool_choice [+ parallel_tool_calls] → function_calling). max_completion_tokens reported as 943717 (provider remaining-context artifact, same pattern as glm-5.3's 943718) — conservatively set to 131072 peer-aligned (over-declaring is safe). Verified against OpenRouter /api/v1/models on 2026-10-09. Pricing $0.15/M in, $0.50/M out (cache read $0.03/M). Suited for efficient coding and long-horizon agent tasks (hybrid sparse + linear attention). UNTESTED with the plugin at add time. Sits before z-ai/glm-5.3 per convention.",
+      "intelligence_score": 15
+    },
+    {
+      "model_name": "deepseek/deepseek-v4.1-flash-1017",
+      "aliases": [
+        "deepseek-v4.1-flash-1017",
+        "dsv41flash1017",
+        "v41flash1017"
+      ],
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "supports_extended_thinking": true,
+      "supports_json_mode": true,
+      "supports_function_calling": true,
+      "supports_images": true,
+      "max_image_size_mb": 20.0,
+      "allow_code_generation": true,
+      "description": "DeepSeek V4.1 Flash snapshot 1017 (dated sibling of deepseek/deepseek-v4.1-flash, which stays in the registry). 1M context, 393K output, multimodal (text+image->text), reasoning with granular effort. context_length=1048576, max_completion_tokens=393216, full supported_parameters (reasoning, reasoning_effort, include_reasoning, structured_outputs, tools, tool_choice, response_format, seed, logprobs, ...) verified against OpenRouter /api/v1/models on 2026-10-19. Pricing $0.30/M in, $1.20/M out. UNTESTED with the plugin at add time (added on user request for debates).",
       "intelligence_score": 15
     },
     {

@@ -4,6 +4,44 @@ All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the `version` field of
 `plugins/cross-model-toolkit/.claude-plugin/plugin.json`. Dates from git history.
 
+## [1.5.0] — 2026-10-24
+
+### Added
+- **Send ledger** for the pre-send guard (Guardrail iteration 1): `pal_pre_send_check.py --ledger`
+  (env `PAL_LEDGER`, default OFF; CLI output bit-identical without it) writes one JSONL entry per
+  check with an `ok` / `hard_fail` verdict, a mechanical `--mcp-path` ⊆ payload coverage check,
+  and a persisted prompt copy — rotation + append under a side lockfile, fail-closed on write
+  errors. Companion `scripts/pal_plan_manifest.py` registers a paths+sha256 plan bundle at
+  planning time (order-invariant aggregate; `--slug` writes `state/manifests/<slug>.json`);
+  `--plan-manifest` derives exclusions by diff.
+- **Guard server** (Guardrail iteration 2, opt-in per project — the plugin's `.mcp.json` still
+  starts plain PAL): `scripts/pal_guarded_server.py` runs the SHA-pinned PAL fork in-process and
+  audits the *effective* prompt right before `generate_content`, fail-closed. STRICT by default
+  (`PAL_GUARD_STRICT=0` opts out): file sends need a slug/manifest, and files + `continuation_id`
+  is rejected (`continuation-with-files`) to enforce fresh threads. Post-send sidecar
+  `pal_guard_responses.jsonl`, registry + fork-module pins (`scripts/pal_guard_pins.py`), and
+  `scripts/pal_guard_verify.py` to check a deliberation transcript against the sidecar by
+  canonical hash. `run_check()` is now importable from `pal_pre_send_check.py`.
+- 4 models to the registry, all verified against OpenRouter `/api/v1/models` on the date added and
+  untested with the plugin at add time: `xiaomi/mimo-v2.6-flash` (1M, $0.14/M in, $0.28/M out),
+  `qwen/qwen3.8-flash` (1M, $0.15/$0.47), `z-ai/glm-5.3-flash` (1M, $0.15/$0.50) and
+  `deepseek/deepseek-v4.1-flash-1017` (dated snapshot; `deepseek-v4.1-flash` stays). Now **12
+  curated entries, all flagged for reasoning**.
+
+### Changed
+- `debate` and `interceptor` skills: ledger contract (`--ledger` + `--plan-manifest` +
+  `--mcp-path` mandatory in a Guardrail context) and, when the PAL server is the guard, the
+  fresh-thread rule + `[guard-session: <slug>]` prompt header. New *Send ledger* and *Guard
+  server* sections in `references/pal-call-conventions.md`.
+
+### Fixed
+- Findings from two adversarial code reviews by glm-5.3 (R1–R8 on the ledger, H1–H13 on the guard
+  server), incl. a lockfile closing a rotation TOCTOU, `missing_from_payload` now a hard fail, and
+  two bugs observed in the guard's own first real run (realpath on lost files, history parse
+  anchored to its start marker). Suite: 84 passed + 1 opt-in integration test.
+- Docs model counts (README, Kimi Code variant): they said 7 curated / 7 flagged; `z-ai/glm-5.3`
+  shipped in 1.4.0 without being counted.
+
 ## [1.4.0] — 2026-09-17
 
 ### Added
