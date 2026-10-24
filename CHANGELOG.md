@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the `version` field of
 `plugins/cross-model-toolkit/.claude-plugin/plugin.json`. Dates from git history.
 
+## [1.5.1] — 2026-10-24
+
+### Security
+- **PAL's `clink` tool disabled** (`DISABLED_TOOLS=clink` in `.mcp.json`). The pinned fork exposed
+  it by default (18 tools, docs listed 17): it spawns external agent CLIs with permissive presets
+  (`claude --permission-mode acceptEdits`, `codex --dangerously-bypass-approvals-and-sandbox`,
+  `gemini --yolo`) and bypasses the pre-send guard, which only wraps `chat`. No skill used it; the
+  second model advises and never acts on files. Kimi Code launchers get the same setting (it is a
+  pinned value — re-sign the guard pins after changing it).
+
 ## [1.5.0] — 2026-10-24
 
 ### Added

@@ -33,6 +33,10 @@ honest.
 | Code | `codereview`, `precommit`, `secaudit`, `testgen`, `refactor`, `debug`, `tracer`, `docgen`, `analyze` |
 | Util | `listmodels`, `apilookup`, `version` |
 
+PAL's 18th tool, `clink`, is **disabled** (`DISABLED_TOOLS=clink` in `.mcp.json`): it spawns
+external agent CLIs (`claude`, `codex`, `gemini`) with edit/bypass permissions and outside the
+pre-send guard — the second model advises, it never acts on your files.
+
 **2. Two skills** (namespaced under the plugin):
 
 - **`/cross-model-toolkit:interceptor <idea>`** — turns a rough idea into a complete, ready-to-paste

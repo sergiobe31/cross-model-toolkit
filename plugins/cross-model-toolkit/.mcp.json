@@ -11,6 +11,7 @@
         "OPENROUTER_API_KEY": "${user_config.openrouter_api_key}",
         "OPENROUTER_MODELS_CONFIG_PATH": "${CLAUDE_PLUGIN_ROOT}/config/pal_openrouter_models.json",
         "DEFAULT_MODEL": "auto",
+        "DISABLED_TOOLS": "clink",
         "LOG_LEVEL": "INFO"
       }
     }

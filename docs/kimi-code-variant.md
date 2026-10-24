@@ -14,7 +14,8 @@ as deployed in the `rule_extraction` project.
   models + 12 curated overlay entries, 12 flagged `supports_extended_thinking`), wired via
   `OPENROUTER_MODELS_CONFIG_PATH`. The project keeps **no copy**: both of its launchers point that
   variable at this repo's generated file by absolute path, so the registry cannot drift.
-- **Env:** `DEFAULT_MODEL=auto`, no `OPENROUTER_ALLOWED_MODELS` — any OpenRouter model per call.
+- **Env:** `DEFAULT_MODEL=auto`, no `OPENROUTER_ALLOWED_MODELS` — any OpenRouter model per call;
+  `DISABLED_TOOLS=clink` (agent-CLI bridge with edit permissions, outside the guard).
 - **Skills:** `debate` and `interceptor` with the same loop, evidence gate and adjudication
   protocol.
 
@@ -38,7 +39,7 @@ Responsibilities, in order:
    appears in `.mcp.json` or any committed file.
 3. Fail fast with a clear error if `OPENROUTER_API_KEY` is unset.
 4. Export `OPENROUTER_MODELS_CONFIG_PATH` (this repo's generated registry, by absolute path),
-   `DEFAULT_MODEL=auto`, `LOG_LEVEL=INFO`.
+   `DEFAULT_MODEL=auto`, `LOG_LEVEL=INFO`, `DISABLED_TOOLS=clink`.
 5. `exec uvx --from git+https://github.com/sergiobe31/pal-mcp-server.git@<pinned SHA> pal-mcp-server`.
 
 The project's `.mcp.json` then points the `pal` server at that script:
@@ -65,7 +66,8 @@ at `pal_server.sh` bypasses the guard.
 
 When the registry is updated here (overlay edit + `build_registry.py`), there is nothing to copy —
 the project reads this repo's file directly — but **re-sign the guard pins**: the guarded server
-recomputes the registry hash at startup and refuses to serve on any mismatch. Run
+recomputes the registry hash at startup and refuses to serve on any mismatch. The same applies to
+the pinned env values (`DISABLED_TOOLS`, `DEFAULT_MODEL`, `LOCALE`, conversation limits). Run
 `scripts/pal_guard_pins.py --update` in the guarded launcher's environment (same
 `uvx --from <fork@SHA>` and env vars, since it imports the fork to hash its modules). When the PAL
 fork SHA is bumped, bump it in this plugin's `.mcp.json` **and** in both project launchers
