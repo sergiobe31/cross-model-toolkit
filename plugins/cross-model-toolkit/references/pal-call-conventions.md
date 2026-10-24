@@ -26,6 +26,62 @@ Default tool: **`mcp__pal__chat`**.
 - **`absolute_file_paths`:** pass relevant files this way for grounding instead of pasting large
   contents into the prompt.
 
+## Building the dossier (review and critique calls)
+
+The second model can only find problems in what you send — a gap in the dossier is a blind spot
+it cannot even report. Selection quality is the main lever on review quality: build the dossier
+deliberately, not ad hoc.
+
+**Checklist** — for the code or claim under review, gather:
+
+1. **Target** — the files/sections actually under discussion.
+2. **Dependencies** — the definitions the target relies on for the point at stake (called
+   functions, types, schemas), not whole libraries.
+3. **Callers** — grep the symbols at stake: who calls them is the blast radius of any change.
+4. **Tests** — the tests that exercise the target, or an explicit note that there are none.
+5. **Runtime inputs** — config, registry, env shape or data the code reads (never secrets — the
+   pre-send check enforces it).
+6. **Contract** — the spec, doc or `CLAUDE.md`/`AGENTS.md` section that defines expected behavior.
+
+For large files, send the relevant sections or graph lookups (see *Graph grounding*) instead of
+whole files.
+
+**Declare the boundary.** Close the prompt with a short *Not included* list — what you left out
+and why, one line each. The adversary then knows where its view ends, and the same list goes into
+the deliberation (the ledger records which files went out; this records why the others didn't).
+
+**When it doesn't fit.** The limit is the model's per-call file budget: files over it are dropped
+(the guard records them as `files_skipped_by_budget`; with a plan manifest that is a hard
+reject). In this order:
+
+1. **Trim** — sections and graph lookups instead of whole files.
+2. **Bigger window** — a larger-context model, still from a different vendor than yours.
+3. **Partition by coupling, not by size** — each partition keeps a module together with its
+   callers and tests. Every partition runs on a fresh thread (files ⇒ fresh thread, see *Guard
+   server*), so the model does NOT remember the other partitions: give each prompt the shared
+   position plus an *interface summary* of the other partitions — the signatures/contracts they
+   expose, not their findings (findings would anchor the review). Under the guard, give each
+   partition its own manifest (`pal_plan_manifest.py … --slug <slug>-p1`, `-p2`, …): a manifest
+   file missing from a round's payload is a hard reject. Partition passes over the same material
+   count as **one** debate round. Cross-partition interactions the interface summaries don't
+   cover are a declared blind spot.
+
+**Context requests.** Ask the adversary to close its answer with concrete requests `[C1..Cn]` (at
+most 5): a file, symbol or section, plus the finding or question it would settle. For each one:
+
+- **Check it exists.** A request for a file or symbol that doesn't exist is a HALLUCINATION —
+  count it in the tally.
+- **Verify it yourself first.** You have the repo: reading the requested item often settles the
+  linked finding directly, with no extra round.
+- **Grant or deny, with a reason.** Granted items go out in the next round under the fresh-thread
+  rule: the dossier + the granted files + a recap of the adjudicated findings (or keep the thread
+  and inline them with their sha256 within the 60,000-char prompt limit). Under a plan manifest,
+  granted files appear as `extra_in_payload` in the ledger — the audit trail of what was added
+  beyond the plan; do not rewrite the manifest mid-debate. A round run only to serve context
+  requests counts toward the round cap.
+- A finding that depends on a request you neither granted nor verified stays **SMELL**, with the
+  request as its named check.
+
 ## Pre-send check (hard-fail, before every hand-off)
 
 Before ANY PAL call that includes files or pasted content, export the composed prompt to a temp

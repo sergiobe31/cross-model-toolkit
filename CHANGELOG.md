@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the `version` field of
 `plugins/cross-model-toolkit/.claude-plugin/plugin.json`. Dates from git history.
 
+## [1.6.0] — 2026-10-24
+
+### Changed
+- **Dossier discipline for review calls** — new *Building the dossier* section in
+  `references/pal-call-conventions.md`. The second model can only find problems in what it is
+  sent, so the dossier follows a six-item checklist (target · dependencies · callers · tests ·
+  runtime inputs · contract) and closes with a declared *Not included* list. When it doesn't fit
+  one call: trim → bigger-window model → partition by coupling, each partition on a fresh thread
+  with an interface summary of the others and, under the guard, its own manifest
+  (`--slug <slug>-pN`, since a manifest file missing from a round is a hard reject).
+- **Context requests** — the adversary closes with up to 5 concrete requests `[C1..Cn]` (file /
+  symbol / section + the finding it would settle). Claude checks each exists (a nonexistent one is
+  a HALLUCINATION), verifies it itself first, then grants or denies with a reason; granted files
+  go out in the next round and show as `extra_in_payload` under a plan manifest. A finding hanging
+  on an unserved request stays SMELL. This closes the loop on "what you cannot evaluate", which
+  used to be a dead end.
+- `debate` skill v1.2.0 wires both in: dossier checklist in Phase 0, context requests in the
+  adversary contract and the adjudication, round accounting (partition passes = one round; a
+  round served only for context requests counts toward the cap of 3), the dossier boundary as
+  category (e) of "what this debate does NOT evaluate", and both recorded in the persisted
+  deliberation.
+
 ## [1.5.1] — 2026-10-24
 
 ### Security

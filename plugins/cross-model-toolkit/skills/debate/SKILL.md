@@ -13,7 +13,7 @@ description: >-
 metadata:
   type: meta
   author: Sergio + Claude
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Debate — adversarial chamber (Claude ↔ second model)
@@ -50,6 +50,12 @@ evidence gate are defined there; this skill only adds the adversarial framing.
 ### Phase 0 — Capture context
 Read what's relevant in the cwd (`CLAUDE.md`/`AGENTS.md`, files the user named, a memory index)
 and gather cheap evidence (grep, a quick web check) so the debate is grounded, not vibes.
+
+**Build the dossier with the checklist** in `references/pal-call-conventions.md` (*Building the
+dossier*): target · dependencies · callers · tests · runtime inputs · contract — plus a *Not
+included* list. The adversary can only find what you send, so this is where the review's quality
+is decided. If it doesn't fit one call: trim → bigger-window model → partition by coupling (same
+section).
 
 ### Phase 1 — Your position
 State a clear position: steelman BOTH sides briefly, then give your recommendation with the
@@ -115,7 +121,9 @@ omissions, failure modes; steelman the opposite; flag what it lacks context on. 
 **Adversary output contract:** every finding numbered `[H1..Hn]` with (a) proposed severity
 (blocking/high/medium/low), (b) concrete failure mechanism ("if X then Y"), (c) evidence
 (file:line / §dossier / reproducible reasoning), (d) one-line prescription — closed by two
-paragraphs: "what the plan has right" and "what you cannot evaluate from your position".
+paragraphs, "what the plan has right" and "what you cannot evaluate from your position", and by
+**context requests** `[C1..Cn]` (at most 5): a concrete file / symbol / section + the finding it
+would settle.
 **Non-conformance:** if the output lacks the structure or citations, retry ONCE restating the
 contract verbatim; if it fails again, mark the round NON-ADJUDICABLE and move it to the pending
 appendix (do not silently accept an unstructured attack).
@@ -127,10 +135,15 @@ against ground truth, verify line numbers and claims yourself, and report the ta
 (hallucinations included). Verification cuts both ways — it rescues a real point you'd have dismissed
 and kills a plausible one.
 
+Then handle each context request (*Context requests* in the conventions): check it exists, verify
+it yourself first, grant or deny with a reason. A finding hanging on an unserved request stays
+SMELL.
+
 ### Phase 4 — Refine (optional, capped)
-If the adjudication changed your position, refine it and run ONE more adversary round.
-**Cap the total at 3 rounds.** Debate amplifies shared bias after the first round
-(arXiv 2505.19477); the cross-vendor pairing (Claude + GLM share little training) mitigates this
+If the adjudication changed your position — or granted context requests could change a blocking
+finding — refine it and run ONE more adversary round. **Cap the total at 3 rounds** (partition
+passes over the same material count as one; a round served only for context requests counts).
+Debate amplifies shared bias after the first round (arXiv 2505.19477); the cross-vendor pairing (Claude + GLM share little training) mitigates this
 but doesn't remove it — so stop early and flag if the two models start agreeing for agreement's
 sake (convergence can be groupthink, not truth).
 
@@ -179,7 +192,9 @@ output is adjudicated like any other.
    `PENDIENTE-ADJUDICACIÓN-SERGIO` if residual disagreements remain.
 4. **What this debate does NOT evaluate** — required categories: (a) implementability in the
    current repo, (b) interaction with existing skills/workflows, (c) accuracy of any cost
-   estimate, (d) items that require human judgment.
+   estimate, (d) items that require human judgment, (e) the dossier boundary — the *Not included*
+   list, context requests denied or unserved, and cross-partition interactions if it was
+   partitioned.
 5. **Footer** — `> Want another round, a different framing, or a normal request to act on this?`
 
 Respond in the user's language.
@@ -191,6 +206,8 @@ debate to `.kimi-code/deliberations/<slug>.md` with:
   sent;
 - the **verbatim raw transcript of EVERY adversary round** — with that round's `continuation_id`,
   timestamp, and the sha256 of that round's raw output — recorded BEFORE the adjudication;
+- the dossier sent (files + *Not included* list) and every context request with its grant/deny
+  decision;
 - the adjudication, citing the round id of each finding.
 
 Outside the Guardrail context, persisting stays optional — same format recommended. Useful for
